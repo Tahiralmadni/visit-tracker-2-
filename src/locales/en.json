@@ -133,6 +133,8 @@
   "permissionDenied": "Permission Denied",
   "adminOnlyFeature": "This feature is available only for administrators",
   "officerOnlyEdit": "You can only edit your own visits",
+  "userAccessRestricted": "You do not have permission to view visit data.",
+  "contactAdminForAccess": "Please contact an administrator if you need access.",
   "createdBy": "Created by",
   "lastUpdatedBy": "Last updated by",
   "checkingAuth": "Checking authentication...",

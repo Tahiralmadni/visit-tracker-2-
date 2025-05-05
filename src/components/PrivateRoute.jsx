@@ -52,13 +52,22 @@ export default function PrivateRoute({ children, requiredRoles = null }) {
 
     // Redirect if user doesn't have the required role
     if (!hasRequiredRole) {
+      // Determine the appropriate error message based on the user's role
+      let errorMessage = t('roleBasedAccess');
+      
+      if (userRole === 'user') {
+        errorMessage = t('userAccessRestricted');
+      } else if (requiredRoles === 'admin' || (Array.isArray(requiredRoles) && requiredRoles.includes('admin') && !requiredRoles.includes('officer'))) {
+        errorMessage = t('adminOnlyFeature');
+      }
+      
       return (
         <Navigate 
           to="/" 
           replace 
           state={{ 
             message: t('permissionDenied'),
-            error: requiredRoles === 'admin' ? t('adminOnlyFeature') : t('roleBasedAccess')
+            error: errorMessage
           }}
         />
       );

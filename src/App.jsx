@@ -362,7 +362,7 @@ function App() {
             <Route
               path="/visit/:id"
               element={
-                <PrivateRoute>
+                <PrivateRoute requiredRoles={['admin', 'officer']}>
                   <VisitDetailsWrapper />
                 </PrivateRoute>
               }

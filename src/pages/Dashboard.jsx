@@ -470,6 +470,7 @@ function Dashboard({ visits = [], onDelete }) {
     console.log("Current user role:", userRole);
     console.log("Is officer:", isOfficer);
     console.log("Officer name:", officerName);
+    console.log("Is admin:", isAdmin);
     
     // If user is an officer, only show their visits
     if (isOfficer && officerName) {
@@ -491,10 +492,14 @@ function Dashboard({ visits = [], onDelete }) {
       
       console.log("Officer visits after filtering:", officerVisits.length);
       setLocalVisits(officerVisits);
-    } else {
+    } else if (isAdmin) {
       // For admin, show all visits
       console.log("Showing all visits for admin");
       setLocalVisits(visits);
+    } else {
+      // For regular users, show no visits
+      console.log("Regular user - No access to visits");
+      setLocalVisits([]);
     }
     setIsLoading(true);
 
@@ -502,62 +507,73 @@ function Dashboard({ visits = [], onDelete }) {
       setIsLoading(false);
     }, 300); // Reduced from 500ms to 300ms
 
-    // Extract unique values for dropdowns
-    const officerNames = [...new Set(visits.map(visit => visit.officerName).filter(name => name))];
-    const dates = [...new Set(visits.map(visit => visit.date).filter(date => date))].sort();
-    const durations = [...new Set(visits.map(visit => visit.duration).filter(duration => duration))].sort((a, b) => parseInt(a) - parseInt(b));
-    const addresses = [...new Set(visits.map(visit => visit.address).filter(address => address))];
+    // Extract unique values for dropdowns (only for admin and officers)
+    if (isAdmin || isOfficer) {
+      const officerNames = [...new Set(visits.map(visit => visit.officerName).filter(name => name))];
+      const dates = [...new Set(visits.map(visit => visit.date).filter(date => date))].sort();
+      const durations = [...new Set(visits.map(visit => visit.duration).filter(duration => duration))].sort((a, b) => parseInt(a) - parseInt(b));
+      const addresses = [...new Set(visits.map(visit => visit.address).filter(address => address))];
 
-    setUniqueOfficerNames(officerNames);
-    setUniqueDates(dates);
-    setUniqueDurations(durations);
-    setUniqueAddresses(addresses);
+      setUniqueOfficerNames(officerNames);
+      setUniqueDates(dates);
+      setUniqueDurations(durations);
+      setUniqueAddresses(addresses);
 
-    // Get current month
-    const currentMonth = dayjs().format('MM');
-    const currentMonthNameKey = months.find(m => m.value === currentMonth)?.label || '';
-    setCurrentMonthName(currentMonthNameKey);
+      // Get current month
+      const currentMonth = dayjs().format('MM');
+      const currentMonthNameKey = months.find(m => m.value === currentMonth)?.label || '';
+      setCurrentMonthName(currentMonthNameKey);
 
-    // Count total questions for current month
-    // If officer, only count their questions
-    let visitsToCount = visits;
-    if (isOfficer && officerName) {
-      console.log(`Filtering questions count for officer: ${officerName}`);
-      // Use strict exact matching for officer name to ensure we only count THIS officer's questions
-      visitsToCount = visits.filter(v => {
-        const isMatch = exactOfficerMatch(v.officerName, officerName);
-        console.log(`Visit by ${v.officerName}, match with ${officerName}: ${isMatch}`);
-        return isMatch;
+      // Count total questions for current month
+      // If officer, only count their questions
+      let visitsToCount = visits;
+      if (isOfficer && officerName) {
+        console.log(`Filtering questions count for officer: ${officerName}`);
+        // Use strict exact matching for officer name to ensure we only count THIS officer's questions
+        visitsToCount = visits.filter(v => {
+          const isMatch = exactOfficerMatch(v.officerName, officerName);
+          console.log(`Visit by ${v.officerName}, match with ${officerName}: ${isMatch}`);
+          return isMatch;
+        });
+        console.log(`After filtering: ${visitsToCount.length} visits belong to ${officerName}`);
+      }
+      
+      // Count questions in the current month using proper question counting
+      const filteredVisits = visitsToCount.filter(v => dayjs(v.date).format('MM') === currentMonth);
+      const questionsCount = countQuestionsInVisits(filteredVisits);
+      
+      console.log(`Total questions for ${isOfficer ? officerName : 'admin'}: ${questionsCount}`);
+      setTotalMonthlyQuestions(questionsCount);
+
+      // Prepare data for the chart
+      const monthlyData = {};
+      visitsToCount.forEach(visit => {
+        const month = dayjs(visit.date).format('YYYY-MM');
+        if (monthlyData[month]) {
+          monthlyData[month]++;
+        } else {
+          monthlyData[month] = 1;
+        }
       });
-      console.log(`After filtering: ${visitsToCount.length} visits belong to ${officerName}`);
+
+      const chartData = Object.keys(monthlyData).map(month => ({
+        month: month,
+        visits: monthlyData[month]
+      }));
+
+      setVisitsPerMonth(chartData);
+    } else {
+      // Reset all data for regular users
+      setUniqueOfficerNames([]);
+      setUniqueDates([]);
+      setUniqueDurations([]);
+      setUniqueAddresses([]);
+      setTotalMonthlyQuestions(0);
+      setVisitsPerMonth([]);
     }
     
-    // Count questions in the current month using proper question counting
-    const filteredVisits = visitsToCount.filter(v => dayjs(v.date).format('MM') === currentMonth);
-    const questionsCount = countQuestionsInVisits(filteredVisits);
-    
-    console.log(`Total questions for ${isOfficer ? officerName : 'admin'}: ${questionsCount}`);
-    setTotalMonthlyQuestions(questionsCount);
-
-    // Prepare data for the chart
-    const monthlyData = {};
-    visitsToCount.forEach(visit => {
-      const month = dayjs(visit.date).format('YYYY-MM');
-      if (monthlyData[month]) {
-        monthlyData[month]++;
-      } else {
-        monthlyData[month] = 1;
-      }
-    });
-
-    const chartData = Object.keys(monthlyData).map(month => ({
-      month: month,
-      visits: monthlyData[month]
-    }));
-
-    setVisitsPerMonth(chartData);
     return () => clearTimeout(timer);
-  }, [visits, isOfficer, officerName, isAdmin]);
+  }, [visits, isOfficer, officerName, isAdmin, userRole]);
 
   const handleDelete = async (id) => {
     try {
@@ -1144,760 +1160,795 @@ function Dashboard({ visits = [], onDelete }) {
           <LoadingSpinner message={t('loadingVisits')} />
         ) : (
           <>
-            {/* Overall Stats Cards */}
-            <Box sx={{ 
-              mb: 4, 
-              display: 'flex', 
-              gap: 3, 
-              flexWrap: 'wrap', 
-              justifyContent: 'center',
-              alignItems: 'stretch' 
-            }}>
-              <Card 
-                elevation={0}
+            {/* Show message for regular users with no access */}
+            {!isAdmin && !isOfficer && (
+              <Box 
                 sx={{ 
-                  flex: '1 1 240px',
-                  maxWidth: '320px',
-                  minWidth: '240px',
-                  height: '100%',
-                  boxShadow: theme.palette.mode === 'dark' 
-                    ? '0 10px 30px rgba(0, 0, 0, 0.8)' 
-                    : '0 15px 35px rgba(64,181,173,0.18)',
-                  borderRadius: '24px',
-                  backgroundColor: theme.palette.mode === 'dark' 
-                    ? 'rgba(0, 0, 0, 0.25)' 
-                    : 'linear-gradient(145deg, #ffffff, #f5f9fa)',
-                  backgroundImage: theme.palette.mode === 'dark'
-                    ? 'linear-gradient(145deg, #1e1e1e, #121212)'
-                    : 'linear-gradient(145deg, #ffffff, #f5f9fa)',
-                  border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.03)'}`,
-                  transition: 'all 0.3s ease',
-                  position: 'relative',
-                  overflow: 'hidden',
-                  '&:hover': {
-                    transform: 'translateY(-8px)',
-                    boxShadow: theme.palette.mode === 'dark' 
-                      ? '0 15px 35px rgba(0, 0, 0, 0.9)' 
-                      : '0 20px 40px rgba(64,181,173,0.25)',
-                  },
-                  '&::before': {
-                    content: '""',
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    height: '100%',
-                    background: theme.palette.mode === 'dark'
-                      ? 'linear-gradient(45deg, rgba(64,181,173,0.05) 0%, rgba(0,0,0,0) 70%)'
-                      : 'linear-gradient(45deg, rgba(64,181,173,0.08) 0%, rgba(255,255,255,0) 70%)',
-                    zIndex: 1
-                  }
+                  display: 'flex', 
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  textAlign: 'center',
+                  padding: '40px',
+                  margin: '40px auto',
+                  maxWidth: '600px',
+                  borderRadius: '20px',
+                  border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
+                  backgroundColor: theme.palette.mode === 'dark' ? 'rgba(0, 0, 0, 0.2)' : 'rgba(255, 255, 255, 0.8)',
+                  boxShadow: theme.palette.mode === 'dark' ? '0 8px 32px rgba(0, 0, 0, 0.5)' : '0 8px 32px rgba(0, 0, 0, 0.1)'
                 }}
               >
-                <CardContent sx={{ p: 3, position: 'relative', zIndex: 2 }}>
-                  <Box sx={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    mb: 2,
-                    pb: 2,
-                    borderBottom: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'}`
-                  }}>
-                    <Box sx={{ 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      justifyContent: 'center',
-                      backgroundColor: theme.palette.mode === 'dark' ? 'rgba(64, 181, 173, 0.15)' : 'rgba(64, 181, 173, 0.1)',
-                      borderRadius: '12px',
-                      width: '48px',
-                      height: '48px',
-                      mr: 2
-                    }}>
-                      <PeopleAltIcon sx={{ fontSize: 28, color: '#40B5AD' }} />
-                    </Box>
-                    <Typography variant="h6" component="div" sx={{ 
-                      fontWeight: 700, 
-                      color: theme.palette.mode === 'dark' ? '#fff' : '#40B5AD',
-                      fontSize: '1.125rem',
-                      letterSpacing: '-0.5px'
-                    }}>
-                      {t('totalVisits')}
-                    </Typography>
-                  </Box>
-                  <Typography variant="h2" component="div" sx={{ 
-                    fontWeight: 800, 
-                    color: theme.palette.text.primary,
-                    fontSize: '2.5rem',
-                    textAlign: 'center',
-                    mt: 2
-                  }}>
-                    {formatNumber(filteredVisits.length, i18n.language)}
-                  </Typography>
-                </CardContent>
-              </Card>
-              
-              <Card 
-                elevation={0}
-                sx={{ 
-                  flex: '1 1 240px',
-                  maxWidth: '320px',
-                  minWidth: '240px',
-                  height: '100%',
-                  boxShadow: theme.palette.mode === 'dark' 
-                    ? '0 10px 30px rgba(0, 0, 0, 0.8)' 
-                    : '0 15px 35px rgba(64,181,173,0.18)',
-                  borderRadius: '24px',
-                  backgroundColor: theme.palette.mode === 'dark' 
-                    ? 'rgba(0, 0, 0, 0.25)' 
-                    : 'linear-gradient(145deg, #ffffff, #f5f9fa)',
-                  backgroundImage: theme.palette.mode === 'dark'
-                    ? 'linear-gradient(145deg, #1e1e1e, #121212)'
-                    : 'linear-gradient(145deg, #ffffff, #f5f9fa)',
-                  border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.03)'}`,
-                  transition: 'all 0.3s ease',
-                  position: 'relative',
-                  overflow: 'hidden',
-                  '&:hover': {
-                    transform: 'translateY(-8px)',
-                    boxShadow: theme.palette.mode === 'dark' 
-                      ? '0 15px 35px rgba(0, 0, 0, 0.9)' 
-                      : '0 20px 40px rgba(64,181,173,0.25)',
-                  },
-                  '&::before': {
-                    content: '""',
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    height: '100%',
-                    background: theme.palette.mode === 'dark'
-                      ? 'linear-gradient(45deg, rgba(64,181,173,0.05) 0%, rgba(0,0,0,0) 70%)'
-                      : 'linear-gradient(45deg, rgba(64,181,173,0.08) 0%, rgba(255,255,255,0) 70%)',
-                    zIndex: 1
-                  }
-                }}
-              >
-                <CardContent sx={{ p: 3, position: 'relative', zIndex: 2 }}>
-                  <Box sx={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    mb: 2,
-                    pb: 2,
-                    borderBottom: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'}`
-                  }}>
-                    <Box sx={{ 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      justifyContent: 'center',
-                      backgroundColor: theme.palette.mode === 'dark' ? 'rgba(64, 181, 173, 0.15)' : 'rgba(64, 181, 173, 0.1)',
-                      borderRadius: '12px',
-                      width: '48px',
-                      height: '48px',
-                      mr: 2
-                    }}>
-                      <QuestionAnswerIcon sx={{ fontSize: 28, color: '#40B5AD' }} />
-                    </Box>
-                    <Typography variant="h6" component="div" sx={{ 
-                      fontWeight: 700, 
-                      color: theme.palette.mode === 'dark' ? '#fff' : '#40B5AD',
-                      fontSize: '1.125rem',
-                      letterSpacing: '-0.5px'
-                    }}>
-                      {t('totalQuestionsThisMonth', { month: t(currentMonthName) })}
-                    </Typography>
-                  </Box>
-                  <Typography variant="h2" component="div" sx={{ 
-                    fontWeight: 800, 
-                    color: theme.palette.text.primary,
-                    fontSize: '2.5rem',
-                    textAlign: 'center',
-                    mt: 2
-                  }}>
-                    {formatNumber(totalMonthlyQuestions, i18n.language)}
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Box>
-
-            {/* Add Officer Statistics Section */}
-            {isAdmin && (
-              <Box sx={{ 
-                mb: 4, 
-                display: 'flex', 
-                flexDirection: 'column',
-                gap: 2,
-                backgroundColor: theme.palette.mode === 'dark' ? 'rgba(0, 0, 0, 0.25)' : theme.palette.background.paper,
-                borderRadius: '24px',
-                padding: '20px',
-                boxShadow: theme.palette.mode === 'dark' 
-                  ? '0 8px 32px rgba(0, 0, 0, 0.7)' 
-                  : '0 15px 35px rgba(64, 181, 173, 0.12)',
-                border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.03)'}`,
-              }}>
-                <Typography variant="h6" sx={{ 
-                  fontWeight: 700, 
-                  color: theme.palette.mode === 'dark' ? '#fff' : '#40B5AD',
-                  borderBottom: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'}`,
-                  pb: 1,
-                  mb: 2
-                }}>
-                  {t('officerStatistics')}
+                <Typography variant="h4" sx={{ mb: 3, color: theme.palette.mode === 'dark' ? '#ff9800' : '#e65100' }}>
+                  {t('permissionDenied')}
                 </Typography>
-                
-                <Grid container spacing={3}>
-                  {OFFICERS.map(officer => {
-                    // For each officer, calculate their total visits and questions
-                    const currentMonth = dayjs().format('MM');
-                    const selectedMonthValue = selectedMonths.length > 0 && !selectedMonths.includes('all') ? selectedMonths[0] : currentMonth;
-                    
-                    // Count visits for this officer in the selected month
-                    const officerVisits = countVisitsPerOfficer(visits, officer, selectedMonthValue);
-                    
-                    // Count questions using the improved function that detects question numbers (n)
-                    const officerQuestions = countQuestionsInVisits(visits, selectedMonthValue, officer);
-                    
-                    return (
-                      <Grid item xs={12} sm={6} md={4} lg={2.4} key={officer}>
-                        <Card 
-                          elevation={0}
-                          sx={{ 
-                            height: '100%',
-                            boxShadow: theme.palette.mode === 'dark' 
-                              ? '0 5px 15px rgba(0, 0, 0, 0.5)' 
-                              : '0 5px 15px rgba(64,181,173,0.1)',
-                            borderRadius: '16px',
-                            backgroundColor: theme.palette.mode === 'dark' 
-                              ? 'rgba(0, 0, 0, 0.25)' 
-                              : 'linear-gradient(145deg, #ffffff, #f5f9fa)',
-                            border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.03)'}`,
-                            transition: 'all 0.3s ease',
-                            '&:hover': {
-                              transform: 'translateY(-5px)',
-                              boxShadow: theme.palette.mode === 'dark' 
-                                ? '0 8px 20px rgba(0, 0, 0, 0.6)' 
-                                : '0 8px 20px rgba(64,181,173,0.2)',
-                            }
-                          }}
-                        >
-                          <CardContent sx={{ p: 2 }}>
-                            <Typography variant="subtitle1" sx={{ 
-                              fontWeight: 700, 
-                              color: theme.palette.mode === 'dark' ? '#fff' : '#40B5AD',
-                              mb: 2,
-                              textAlign: 'center'
-                            }}>
-                              {officer}
-                            </Typography>
-                            
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                              <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
-                                {t('visits')}:
-                              </Typography>
-                              <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                                {formatNumber(officerVisits, i18n.language)}
-                              </Typography>
-                            </Box>
-                            
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                              <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
-                                {t('questions')}:
-                              </Typography>
-                              <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                                {formatNumber(officerQuestions, i18n.language)}
-                              </Typography>
-                            </Box>
-                          </CardContent>
-                        </Card>
-                      </Grid>
-                    );
-                  })}
-                </Grid>
+                <Typography variant="body1" sx={{ mb: 4 }}>
+                  {t('userAccessRestricted')}
+                </Typography>
+                <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
+                  {t('contactAdminForAccess')}
+                </Typography>
               </Box>
             )}
 
-            <motion.div variants={tableContainerVariants} initial="hidden" animate="visible">
-              <div style={filterStyles.container}>
-                <div style={filterStyles.innerContainer}>
-                  <Grid container spacing={2}>
-                    {/* Month Filter */}
-                    <Grid item xs={12} md={12}>
-                      <FormControl fullWidth size="small">
-                        <InputLabel>{t('selectMonths')}</InputLabel>
-                        <Select
-                          multiple
-                          value={selectedMonths}
-                          onChange={handleMonthChange}
-                          label={t('selectMonths')}
-                          renderValue={(selected) => {
-                            if (selected.includes('all')) return t('allMonths');
-                            return selected
-                              .map(monthValue => {
-                                const month = months.find(m => m.value === monthValue);
-                                return month ? t(month.label) : '';
-                              })
-                              .filter(Boolean)
-                              .join(', ');
-                          }}
-                        >
-                          <MenuItem value="all">
-                            <Checkbox checked={selectedMonths.includes('all')} />
-                            {t('allMonths')}
-                          </MenuItem>
-                          {months.map((month) => (
-                            <MenuItem key={month.value} value={month.value}>
-                              <Checkbox checked={selectedMonths.includes(month.value)} />
-                              {t(month.label)}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                    </Grid>
+            {/* Only show stats and data for admin and officers */}
+            {(isAdmin || isOfficer) && (
+              <>
+                {/* Overall Stats Cards */}
+                <Box sx={{ 
+                  mb: 4, 
+                  display: 'flex', 
+                  gap: 3, 
+                  flexWrap: 'wrap', 
+                  justifyContent: 'center',
+                  alignItems: 'stretch' 
+                }}>
+                  <Card 
+                    elevation={0}
+                    sx={{ 
+                      flex: '1 1 240px',
+                      maxWidth: '320px',
+                      minWidth: '240px',
+                      height: '100%',
+                      boxShadow: theme.palette.mode === 'dark' 
+                        ? '0 10px 30px rgba(0, 0, 0, 0.8)' 
+                        : '0 15px 35px rgba(64,181,173,0.18)',
+                      borderRadius: '24px',
+                      backgroundColor: theme.palette.mode === 'dark' 
+                        ? 'rgba(0, 0, 0, 0.25)' 
+                        : 'linear-gradient(145deg, #ffffff, #f5f9fa)',
+                      backgroundImage: theme.palette.mode === 'dark'
+                        ? 'linear-gradient(145deg, #1e1e1e, #121212)'
+                        : 'linear-gradient(145deg, #ffffff, #f5f9fa)',
+                      border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.03)'}`,
+                      transition: 'all 0.3s ease',
+                      position: 'relative',
+                      overflow: 'hidden',
+                      '&:hover': {
+                        transform: 'translateY(-8px)',
+                        boxShadow: theme.palette.mode === 'dark' 
+                          ? '0 15px 35px rgba(0, 0, 0, 0.9)' 
+                          : '0 20px 40px rgba(64,181,173,0.25)',
+                      },
+                      '&::before': {
+                        content: '""',
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        background: theme.palette.mode === 'dark'
+                          ? 'linear-gradient(45deg, rgba(64,181,173,0.05) 0%, rgba(0,0,0,0) 70%)'
+                          : 'linear-gradient(45deg, rgba(64,181,173,0.08) 0%, rgba(255,255,255,0) 70%)',
+                        zIndex: 1
+                      }
+                    }}
+                  >
+                    <CardContent sx={{ p: 3, position: 'relative', zIndex: 2 }}>
+                      <Box sx={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        mb: 2,
+                        pb: 2,
+                        borderBottom: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'}`
+                      }}>
+                        <Box sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center',
+                          backgroundColor: theme.palette.mode === 'dark' ? 'rgba(64, 181, 173, 0.15)' : 'rgba(64, 181, 173, 0.1)',
+                          borderRadius: '12px',
+                          width: '48px',
+                          height: '48px',
+                          mr: 2
+                        }}>
+                          <PeopleAltIcon sx={{ fontSize: 28, color: '#40B5AD' }} />
+                        </Box>
+                        <Typography variant="h6" component="div" sx={{ 
+                          fontWeight: 700, 
+                          color: theme.palette.mode === 'dark' ? '#fff' : '#40B5AD',
+                          fontSize: '1.125rem',
+                          letterSpacing: '-0.5px'
+                        }}>
+                          {t('totalVisits')}
+                        </Typography>
+                      </Box>
+                      <Typography variant="h2" component="div" sx={{ 
+                        fontWeight: 800, 
+                        color: theme.palette.text.primary,
+                        fontSize: '2.5rem',
+                        textAlign: 'center',
+                        mt: 2
+                      }}>
+                        {formatNumber(filteredVisits.length, i18n.language)}
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                  
+                  <Card 
+                    elevation={0}
+                    sx={{ 
+                      flex: '1 1 240px',
+                      maxWidth: '320px',
+                      minWidth: '240px',
+                      height: '100%',
+                      boxShadow: theme.palette.mode === 'dark' 
+                        ? '0 10px 30px rgba(0, 0, 0, 0.8)' 
+                        : '0 15px 35px rgba(64,181,173,0.18)',
+                      borderRadius: '24px',
+                      backgroundColor: theme.palette.mode === 'dark' 
+                        ? 'rgba(0, 0, 0, 0.25)' 
+                        : 'linear-gradient(145deg, #ffffff, #f5f9fa)',
+                      backgroundImage: theme.palette.mode === 'dark'
+                        ? 'linear-gradient(145deg, #1e1e1e, #121212)'
+                        : 'linear-gradient(145deg, #ffffff, #f5f9fa)',
+                      border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.03)'}`,
+                      transition: 'all 0.3s ease',
+                      position: 'relative',
+                      overflow: 'hidden',
+                      '&:hover': {
+                        transform: 'translateY(-8px)',
+                        boxShadow: theme.palette.mode === 'dark' 
+                          ? '0 15px 35px rgba(0, 0, 0, 0.9)' 
+                          : '0 20px 40px rgba(64,181,173,0.25)',
+                      },
+                      '&::before': {
+                        content: '""',
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        background: theme.palette.mode === 'dark'
+                          ? 'linear-gradient(45deg, rgba(64,181,173,0.05) 0%, rgba(0,0,0,0) 70%)'
+                          : 'linear-gradient(45deg, rgba(64,181,173,0.08) 0%, rgba(255,255,255,0) 70%)',
+                        zIndex: 1
+                      }
+                    }}
+                  >
+                    <CardContent sx={{ p: 3, position: 'relative', zIndex: 2 }}>
+                      <Box sx={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        mb: 2,
+                        pb: 2,
+                        borderBottom: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'}`
+                      }}>
+                        <Box sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center',
+                          backgroundColor: theme.palette.mode === 'dark' ? 'rgba(64, 181, 173, 0.15)' : 'rgba(64, 181, 173, 0.1)',
+                          borderRadius: '12px',
+                          width: '48px',
+                          height: '48px',
+                          mr: 2
+                        }}>
+                          <QuestionAnswerIcon sx={{ fontSize: 28, color: '#40B5AD' }} />
+                        </Box>
+                        <Typography variant="h6" component="div" sx={{ 
+                          fontWeight: 700, 
+                          color: theme.palette.mode === 'dark' ? '#fff' : '#40B5AD',
+                          fontSize: '1.125rem',
+                          letterSpacing: '-0.5px'
+                        }}>
+                          {t('totalQuestionsThisMonth', { month: t(currentMonthName) })}
+                        </Typography>
+                      </Box>
+                      <Typography variant="h2" component="div" sx={{ 
+                        fontWeight: 800, 
+                        color: theme.palette.text.primary,
+                        fontSize: '2.5rem',
+                        textAlign: 'center',
+                        mt: 2
+                      }}>
+                        {formatNumber(totalMonthlyQuestions, i18n.language)}
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Box>
+
+                {/* Add Officer Statistics Section */}
+                {isAdmin && (
+                  <Box sx={{ 
+                    mb: 4, 
+                    display: 'flex', 
+                    flexDirection: 'column',
+                    gap: 2,
+                    backgroundColor: theme.palette.mode === 'dark' ? 'rgba(0, 0, 0, 0.25)' : theme.palette.background.paper,
+                    borderRadius: '24px',
+                    padding: '20px',
+                    boxShadow: theme.palette.mode === 'dark' 
+                      ? '0 8px 32px rgba(0, 0, 0, 0.7)' 
+                      : '0 15px 35px rgba(64, 181, 173, 0.12)',
+                    border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.03)'}`,
+                  }}>
+                    <Typography variant="h6" sx={{ 
+                      fontWeight: 700, 
+                      color: theme.palette.mode === 'dark' ? '#fff' : '#40B5AD',
+                      borderBottom: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'}`,
+                      pb: 1,
+                      mb: 2
+                    }}>
+                      {t('officerStatistics')}
+                    </Typography>
                     
-                    {/* Category Filter - Hide officer name category for officers since they already see only their visits */}
-                    <Grid item xs={12} md={3}>
-                      <FormControl
-                        fullWidth
-                        variant="outlined"
-                        size="small"
-                        sx={{
-                          '& .MuiOutlinedInput-root': {
-                            borderTopRightRadius: isRtl ? '15px' : '0',
-                            borderBottomRightRadius: isRtl ? '15px' : '0',
-                            borderTopLeftRadius: isRtl ? '0' : '15px',
-                            borderBottomLeftRadius: isRtl ? '0' : '15px',
-                          }
-                        }}
-                      >
-                        <InputLabel>{t('searchCategory')}</InputLabel>
-                        <Select
-                          value={searchCategory}
-                          onChange={(e) => handleCategoryChange(e.target.value)}
-                          label={t('searchCategory')}
-                          disabled={isLanguageChanging}
-                        >
-                          {searchCategories
-                            .filter(category => isAdmin || category.value !== 'officerName')
-                            .map((category) => (
-                              <MenuItem 
-                                key={category.value} 
-                                value={category.value}
-                                sx={{ textAlign: isRtl ? 'right' : 'left' }}
-                              >
-                                {t(category.label)}
-                              </MenuItem>
-                            ))}
-                        </Select>
-                      </FormControl>
-                    </Grid>
-                    
-                    {/* Search Input */}
-                    <Grid item xs={12} md={9}>
-                      {searchCategory === 'date' ? (
-                        <LocalizationProvider dateAdapter={AdapterDayjs}>
-                          <DatePicker
-                            value={searchDate}
-                            onChange={(newValue) => setSearchDate(newValue)}
-                            format="YYYY-MM-DD"
-                            slotProps={{
-                              textField: {
-                                fullWidth: true,
-                                size: "small",
-                                sx: {
-                                  '& .MuiOutlinedInput-root': {
-                                    borderTopLeftRadius: isRtl ? '15px' : '0',
-                                    borderBottomLeftRadius: isRtl ? '15px' : '0',
-                                    borderTopRightRadius: isRtl ? '0' : '15px',
-                                    borderBottomRightRadius: isRtl ? '0' : '15px',
-                                  }
+                    <Grid container spacing={3}>
+                      {OFFICERS.map(officer => {
+                        // For each officer, calculate their total visits and questions
+                        const currentMonth = dayjs().format('MM');
+                        const selectedMonthValue = selectedMonths.length > 0 && !selectedMonths.includes('all') ? selectedMonths[0] : currentMonth;
+                        
+                        // Count visits for this officer in the selected month
+                        const officerVisits = countVisitsPerOfficer(visits, officer, selectedMonthValue);
+                        
+                        // Count questions using the improved function that detects question numbers (n)
+                        const officerQuestions = countQuestionsInVisits(visits, selectedMonthValue, officer);
+                        
+                        return (
+                          <Grid item xs={12} sm={6} md={4} lg={2.4} key={officer}>
+                            <Card 
+                              elevation={0}
+                              sx={{ 
+                                height: '100%',
+                                boxShadow: theme.palette.mode === 'dark' 
+                                  ? '0 5px 15px rgba(0, 0, 0, 0.5)' 
+                                  : '0 5px 15px rgba(64,181,173,0.1)',
+                                borderRadius: '16px',
+                                backgroundColor: theme.palette.mode === 'dark' 
+                                  ? 'rgba(0, 0, 0, 0.25)' 
+                                  : 'linear-gradient(145deg, #ffffff, #f5f9fa)',
+                                border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.03)'}`,
+                                transition: 'all 0.3s ease',
+                                '&:hover': {
+                                  transform: 'translateY(-5px)',
+                                  boxShadow: theme.palette.mode === 'dark' 
+                                    ? '0 8px 20px rgba(0, 0, 0, 0.6)' 
+                                    : '0 8px 20px rgba(64,181,173,0.2)',
                                 }
+                              }}
+                            >
+                              <CardContent sx={{ p: 2 }}>
+                                <Typography variant="subtitle1" sx={{ 
+                                  fontWeight: 700, 
+                                  color: theme.palette.mode === 'dark' ? '#fff' : '#40B5AD',
+                                  mb: 2,
+                                  textAlign: 'center'
+                                }}>
+                                  {officer}
+                                </Typography>
+                                
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                                  <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
+                                    {t('visits')}:
+                                  </Typography>
+                                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                    {formatNumber(officerVisits, i18n.language)}
+                                  </Typography>
+                                </Box>
+                                
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                                  <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
+                                    {t('questions')}:
+                                  </Typography>
+                                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                    {formatNumber(officerQuestions, i18n.language)}
+                                  </Typography>
+                                </Box>
+                              </CardContent>
+                            </Card>
+                          </Grid>
+                        );
+                      })}
+                    </Grid>
+                  </Box>
+                )}
+
+                <motion.div variants={tableContainerVariants} initial="hidden" animate="visible">
+                  <div style={filterStyles.container}>
+                    <div style={filterStyles.innerContainer}>
+                      <Grid container spacing={2}>
+                        {/* Month Filter */}
+                        <Grid item xs={12} md={12}>
+                          <FormControl fullWidth size="small">
+                            <InputLabel>{t('selectMonths')}</InputLabel>
+                            <Select
+                              multiple
+                              value={selectedMonths}
+                              onChange={handleMonthChange}
+                              label={t('selectMonths')}
+                              renderValue={(selected) => {
+                                if (selected.includes('all')) return t('allMonths');
+                                return selected
+                                  .map(monthValue => {
+                                    const month = months.find(m => m.value === monthValue);
+                                    return month ? t(month.label) : '';
+                                  })
+                                  .filter(Boolean)
+                                  .join(', ');
+                              }}
+                            >
+                              <MenuItem value="all">
+                                <Checkbox checked={selectedMonths.includes('all')} />
+                                {t('allMonths')}
+                              </MenuItem>
+                              {months.map((month) => (
+                                <MenuItem key={month.value} value={month.value}>
+                                  <Checkbox checked={selectedMonths.includes(month.value)} />
+                                  {t(month.label)}
+                                </MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                        </Grid>
+                        
+                        {/* Category Filter - Hide officer name category for officers since they already see only their visits */}
+                        <Grid item xs={12} md={3}>
+                          <FormControl
+                            fullWidth
+                            variant="outlined"
+                            size="small"
+                            sx={{
+                              '& .MuiOutlinedInput-root': {
+                                borderTopRightRadius: isRtl ? '15px' : '0',
+                                borderBottomRightRadius: isRtl ? '15px' : '0',
+                                borderTopLeftRadius: isRtl ? '0' : '15px',
+                                borderBottomLeftRadius: isRtl ? '0' : '15px',
                               }
                             }}
-                          />
-                        </LocalizationProvider>
-                      ) : (
-                        <TextField
-                          fullWidth
-                          variant="outlined"
-                          size="small"
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                          placeholder={t('searchPlaceholder')}
-                          InputProps={{
-                            startAdornment: (
-                              <InputAdornment position="start">
-                                <SearchIcon />
-                              </InputAdornment>
-                            ),
-                            style: {
-                              borderTopLeftRadius: isRtl ? '15px' : '0',
-                              borderBottomLeftRadius: isRtl ? '15px' : '0',
-                              borderTopRightRadius: isRtl ? '0' : '15px',
-                              borderBottomRightRadius: isRtl ? '0' : '15px',
-                            }
-                          }}
-                          disabled={isLanguageChanging}
-                        />
-                      )}
-                    </Grid>
-                  </Grid>
-                </div>
-              </div>
-            </motion.div>
-
-            <motion.div
-              variants={tableContainerVariants}
-              initial="hidden"
-              animate="visible"
-            >
-              <TableContainer 
-                component={Paper} 
-                style={{
-                  ...tableStyles.container,
-                  backgroundColor: theme.palette.mode === 'dark' ? '#121212' : theme.palette.background.paper,
-                }}
-              >
-                <AnimatePresence>
-                  {selected.length > 0 && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.2 }}
-                      style={{ 
-                        padding: '12px 24px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        backgroundColor: theme.palette.primary.main,
-                        color: theme.palette.primary.contrastText,
-                        borderTopLeftRadius: '8px',
-                        borderTopRightRadius: '8px',
-                      }}
-                    >
-                      <Typography variant="subtitle1" component="div" style={{ flex: 1 }}>
-                        {t('selectedItems', { count: selected.length })}
-                      </Typography>
-                      <Button 
-                        color="inherit"
-                        onClick={() => {
-                          if (window.confirm(t('confirmBatchDelete'))) {
-                            handleBatchDelete();
-                          }
-                        }}
-                        disabled={isLanguageChanging || isLoading}
-                        startIcon={isLoading ? <CircularProgress size={20} color="inherit" /> : null}
-                        sx={{
-                          borderColor: 'rgba(255, 255, 255, 0.5)',
-                          '&:hover': {
-                            borderColor: 'rgba(255, 255, 255, 0.8)',
-                            backgroundColor: 'rgba(255, 255, 255, 0.1)'
-                          }
-                        }}
-                      >
-                        {t('deleteSelected')}
-                      </Button>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                <Table style={tableStyles.table}>
-                  <TableHead>
-                    <TableRow sx={{
-                      backgroundColor: theme.palette.mode === 'dark' ? '#1a1a1a' : '#f8f9fa',
-                      '& th': {
-                        color: theme.palette.text.primary,
-                      }
-                    }}>
-                      <TableCell padding="checkbox" style={{ width: '40px' }}>
-                        <Checkbox
-                          indeterminate={selected.length > 0 && selected.length < filteredVisits.length}
-                          checked={filteredVisits.length > 0 && selected.length === filteredVisits.length}
-                          onChange={handleSelectAllClick}
-                        />
-                      </TableCell>
-                      <TableCell style={{ ...tableStyles.headerCell, ...tableStyles.numberCell }}>{t('number')}</TableCell>
-                      <TableCell style={{ ...tableStyles.headerCell, width: '120px' }}>{t('clientName')}</TableCell>
-                      <TableCell style={{ ...tableStyles.headerCell, ...tableStyles.phoneCell }}>{t('contactNumber')}</TableCell>
-                      <TableCell style={{ ...tableStyles.headerCell, width: '150px' }}>{t('address')}</TableCell>
-                      <TableCell style={{ ...tableStyles.headerCell, ...tableStyles.dateCell }}>{t('dateOfVisit')}</TableCell>
-                      <TableCell style={{ ...tableStyles.headerCell, ...tableStyles.timeCell }}>{t('timeIn')}</TableCell>
-                      <TableCell style={{ ...tableStyles.headerCell, ...tableStyles.timeCell }}>{t('timeOut')}</TableCell>
-                      <TableCell style={{ ...tableStyles.headerCell, ...tableStyles.durationCell }}>{t('duration')}</TableCell>
-                      <TableCell style={{ ...tableStyles.headerCell, width: '120px' }}>{t('officerName')}</TableCell>
-                      <TableCell style={{ ...tableStyles.headerCell, width: '150px' }}>{t('question')}</TableCell>
-                      <TableCell style={{ ...tableStyles.headerCell, ...tableStyles.dateCell }}>{t('officerResponseDate')}</TableCell>
-                      <TableCell style={{ ...tableStyles.headerCell, width: '150px' }}>{t('officerAnswer')}</TableCell>
-                      <TableCell style={{ ...tableStyles.headerCell, width: '100px' }}>{t('actions')}</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    <AnimatePresence mode="popLayout">
-                      {sortedAndPaginatedVisits.length === 0 ? (
-                        <motion.tr
-                          variants={rowVariants}
-                          initial="hidden"
-                          animate="visible"
-                          exit="exit"
-                        >
-                          <TableCell 
-                            colSpan={13} 
-                            align="center"
-                            sx={{ textAlign: 'center !important' }}
                           >
-                            {t('noVisitsFound')}
+                            <InputLabel>{t('searchCategory')}</InputLabel>
+                            <Select
+                              value={searchCategory}
+                              onChange={(e) => handleCategoryChange(e.target.value)}
+                              label={t('searchCategory')}
+                              disabled={isLanguageChanging}
+                            >
+                              {searchCategories
+                                .filter(category => isAdmin || category.value !== 'officerName')
+                                .map((category) => (
+                                  <MenuItem 
+                                    key={category.value} 
+                                    value={category.value}
+                                    sx={{ textAlign: isRtl ? 'right' : 'left' }}
+                                  >
+                                    {t(category.label)}
+                                  </MenuItem>
+                                ))}
+                            </Select>
+                          </FormControl>
+                        </Grid>
+                        
+                        {/* Search Input */}
+                        <Grid item xs={12} md={9}>
+                          {searchCategory === 'date' ? (
+                            <LocalizationProvider dateAdapter={AdapterDayjs}>
+                              <DatePicker
+                                value={searchDate}
+                                onChange={(newValue) => setSearchDate(newValue)}
+                                format="YYYY-MM-DD"
+                                slotProps={{
+                                  textField: {
+                                    fullWidth: true,
+                                    size: "small",
+                                    sx: {
+                                      '& .MuiOutlinedInput-root': {
+                                        borderTopLeftRadius: isRtl ? '15px' : '0',
+                                        borderBottomLeftRadius: isRtl ? '15px' : '0',
+                                        borderTopRightRadius: isRtl ? '0' : '15px',
+                                        borderBottomRightRadius: isRtl ? '0' : '15px',
+                                      }
+                                    }
+                                  }
+                                }}
+                              />
+                            </LocalizationProvider>
+                          ) : (
+                            <TextField
+                              fullWidth
+                              variant="outlined"
+                              size="small"
+                              value={searchQuery}
+                              onChange={(e) => setSearchQuery(e.target.value)}
+                              placeholder={t('searchPlaceholder')}
+                              InputProps={{
+                                startAdornment: (
+                                  <InputAdornment position="start">
+                                    <SearchIcon />
+                                  </InputAdornment>
+                                ),
+                                style: {
+                                  borderTopLeftRadius: isRtl ? '15px' : '0',
+                                  borderBottomLeftRadius: isRtl ? '15px' : '0',
+                                  borderTopRightRadius: isRtl ? '0' : '15px',
+                                  borderBottomRightRadius: isRtl ? '0' : '15px',
+                                }
+                              }}
+                              disabled={isLanguageChanging}
+                            />
+                          )}
+                        </Grid>
+                      </Grid>
+                    </div>
+                  </div>
+                </motion.div>
+
+                <motion.div
+                  variants={tableContainerVariants}
+                  initial="hidden"
+                  animate="visible"
+                >
+                  <TableContainer 
+                    component={Paper} 
+                    style={{
+                      ...tableStyles.container,
+                      backgroundColor: theme.palette.mode === 'dark' ? '#121212' : theme.palette.background.paper,
+                    }}
+                  >
+                    <AnimatePresence>
+                      {selected.length > 0 && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          transition={{ duration: 0.2 }}
+                          style={{ 
+                            padding: '12px 24px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            backgroundColor: theme.palette.primary.main,
+                            color: theme.palette.primary.contrastText,
+                            borderTopLeftRadius: '8px',
+                            borderTopRightRadius: '8px',
+                          }}
+                        >
+                          <Typography variant="subtitle1" component="div" style={{ flex: 1 }}>
+                            {t('selectedItems', { count: selected.length })}
+                          </Typography>
+                          <Button 
+                            color="inherit"
+                            onClick={() => {
+                              if (window.confirm(t('confirmBatchDelete'))) {
+                                handleBatchDelete();
+                              }
+                            }}
+                            disabled={isLanguageChanging || isLoading}
+                            startIcon={isLoading ? <CircularProgress size={20} color="inherit" /> : null}
+                            sx={{
+                              borderColor: 'rgba(255, 255, 255, 0.5)',
+                              '&:hover': {
+                                borderColor: 'rgba(255, 255, 255, 0.8)',
+                                backgroundColor: 'rgba(255, 255, 255, 0.1)'
+                              }
+                            }}
+                          >
+                            {t('deleteSelected')}
+                          </Button>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    <Table style={tableStyles.table}>
+                      <TableHead>
+                        <TableRow sx={{
+                          backgroundColor: theme.palette.mode === 'dark' ? '#1a1a1a' : '#f8f9fa',
+                          '& th': {
+                            color: theme.palette.text.primary,
+                          }
+                        }}>
+                          <TableCell padding="checkbox" style={{ width: '40px' }}>
+                            <Checkbox
+                              indeterminate={selected.length > 0 && selected.length < filteredVisits.length}
+                              checked={filteredVisits.length > 0 && selected.length === filteredVisits.length}
+                              onChange={handleSelectAllClick}
+                            />
                           </TableCell>
-                        </motion.tr>
-                      ) : (
-                        sortedAndPaginatedVisits.map((visit, index) => {
-                          const isSelected = selected.includes(visit.id);
-                          const isPending = !visit.officerAnswer || visit.officerAnswer === t('pendingStatus');
-                          
-                          return (
+                          <TableCell style={{ ...tableStyles.headerCell, ...tableStyles.numberCell }}>{t('number')}</TableCell>
+                          <TableCell style={{ ...tableStyles.headerCell, width: '120px' }}>{t('clientName')}</TableCell>
+                          <TableCell style={{ ...tableStyles.headerCell, ...tableStyles.phoneCell }}>{t('contactNumber')}</TableCell>
+                          <TableCell style={{ ...tableStyles.headerCell, width: '150px' }}>{t('address')}</TableCell>
+                          <TableCell style={{ ...tableStyles.headerCell, ...tableStyles.dateCell }}>{t('dateOfVisit')}</TableCell>
+                          <TableCell style={{ ...tableStyles.headerCell, ...tableStyles.timeCell }}>{t('timeIn')}</TableCell>
+                          <TableCell style={{ ...tableStyles.headerCell, ...tableStyles.timeCell }}>{t('timeOut')}</TableCell>
+                          <TableCell style={{ ...tableStyles.headerCell, ...tableStyles.durationCell }}>{t('duration')}</TableCell>
+                          <TableCell style={{ ...tableStyles.headerCell, width: '120px' }}>{t('officerName')}</TableCell>
+                          <TableCell style={{ ...tableStyles.headerCell, width: '150px' }}>{t('question')}</TableCell>
+                          <TableCell style={{ ...tableStyles.headerCell, ...tableStyles.dateCell }}>{t('officerResponseDate')}</TableCell>
+                          <TableCell style={{ ...tableStyles.headerCell, width: '150px' }}>{t('officerAnswer')}</TableCell>
+                          <TableCell style={{ ...tableStyles.headerCell, width: '100px' }}>{t('actions')}</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        <AnimatePresence mode="popLayout">
+                          {sortedAndPaginatedVisits.length === 0 ? (
                             <motion.tr
-                              key={visit.id}
                               variants={rowVariants}
                               initial="hidden"
                               animate="visible"
                               exit="exit"
-                              layout
-                              style={{
-                                cursor: 'pointer',
-                                backgroundColor: isPending 
-                                  ? (theme.palette.mode === 'dark' ? 'rgba(255, 152, 0, 0.08)' : 'rgba(255, 152, 0, 0.03)')
-                                  : (theme.palette.mode === 'dark' ? 'rgba(0, 0, 0, 0.2)' : 'rgba(255, 255, 255, 0.6)'),
-                                transition: 'all 0.15s ease-in-out',
-                                '&:hover': {
-                                  backgroundColor: theme.palette.mode === 'dark' ? 'rgba(64, 181, 173, 0.1)' : 'rgba(64, 181, 173, 0.05)',
-                                  transform: 'translateY(-2px)',
-                                  boxShadow: theme.palette.mode === 'dark' ? '0 4px 12px rgba(0, 0, 0, 0.4)' : '0 4px 12px rgba(0, 0, 0, 0.08)',
-                                },
-                                boxShadow: theme.palette.mode === 'dark' 
-                                  ? '0 1px 3px rgba(0, 0, 0, 0.3)' 
-                                  : '0 1px 3px rgba(0, 0, 0, 0.05)',
-                                borderRadius: '8px',
-                                margin: '8px 0',
-                                border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)'}`,
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.backgroundColor = theme.palette.mode === 'dark' 
-                                  ? 'rgba(64, 181, 173, 0.1)' 
-                                  : 'rgba(64, 181, 173, 0.05)';
-                                e.currentTarget.style.transform = 'translateY(-2px)';
-                                e.currentTarget.style.boxShadow = theme.palette.mode === 'dark' 
-                                  ? '0 4px 12px rgba(0, 0, 0, 0.4)' 
-                                  : '0 4px 12px rgba(0, 0, 0, 0.08)';
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.backgroundColor = isPending 
-                                  ? (theme.palette.mode === 'dark' ? 'rgba(255, 152, 0, 0.08)' : 'rgba(255, 152, 0, 0.03)')
-                                  : (theme.palette.mode === 'dark' ? 'rgba(0, 0, 0, 0.2)' : 'rgba(255, 255, 255, 0.6)');
-                                e.currentTarget.style.transform = 'translateY(0)';
-                                e.currentTarget.style.boxShadow = theme.palette.mode === 'dark' 
-                                  ? '0 1px 3px rgba(0, 0, 0, 0.3)' 
-                                  : '0 1px 3px rgba(0, 0, 0, 0.05)';
-                              }}
                             >
-                              <TableCell padding="checkbox">
-                                <Checkbox
-                                  checked={isSelected}
-                                  onChange={() => handleCheckboxClick(visit.id)}
-                                />
-                              </TableCell>
-                              <TableCell style={{ ...tableStyles.cell, ...tableStyles.numberCell }}>
-                                {formatNumber((page * rowsPerPage) + index + 1, i18n.language)}
-                              </TableCell>
-                              <TableCell style={{ ...tableStyles.cell, maxWidth: '120px' }}>
-                                <Tooltip title={visit?.name || 'N/A'} arrow>
-                                  <span>{visit?.name || 'N/A'}</span>
-                                </Tooltip>
-                              </TableCell>
-                              <TableCell style={{ ...tableStyles.cell, ...tableStyles.phoneCell }}>{visit?.phone || 'N/A'}</TableCell>
-                              <TableCell style={{ ...tableStyles.cell, maxWidth: '150px' }}>
-                                <Tooltip title={visit?.address || 'N/A'} arrow>
-                                  <span>{visit?.address || 'N/A'}</span>
-                                </Tooltip>
-                              </TableCell>
-                              <TableCell style={{ ...tableStyles.cell, ...tableStyles.dateCell }}>
-                                {renderCell(visit?.date, 'date')}
-                              </TableCell>
-                              <TableCell style={{ ...tableStyles.cell, ...tableStyles.timeCell }}>
-                                {renderCell(visit?.timeIn, 'time')}
-                              </TableCell>
-                              <TableCell style={{ ...tableStyles.cell, ...tableStyles.timeCell }}>
-                                {renderCell(visit?.timeOut, 'time')}
-                              </TableCell>
-                              <TableCell style={{ ...tableStyles.cell, ...tableStyles.durationCell }}>
-                                {renderCell(visit?.duration, 'duration')}
-                              </TableCell>
-                              <TableCell style={{ ...tableStyles.cell, maxWidth: '150px' }}>
-                                <Tooltip title={visit?.officerName || 'N/A'} arrow>
-                                  <span>{visit?.officerName || 'N/A'}</span>
-                                </Tooltip>
-                              </TableCell>
-                              <TableCell style={{ ...tableStyles.cell, maxWidth: '150px' }}>
-                                <Tooltip title={visit?.userQuestion || 'N/A'} arrow>
-                                  <span>{visit?.userQuestion || 'N/A'}</span>
-                                </Tooltip>
-                              </TableCell>
-                              <TableCell style={{ ...tableStyles.cell, ...tableStyles.dateCell }}>
-                                {renderCell(visit?.responseDate, 'date')}
-                              </TableCell>
-                              <TableCell style={{ ...tableStyles.cell, maxWidth: '150px' }}>
-                                <Tooltip title={visit?.officerAnswer || 'N/A'} arrow>
-                                  <span>{visit?.officerAnswer || 'N/A'}</span>
-                                </Tooltip>
-                              </TableCell>
-                              <TableCell style={{ ...tableStyles.cell, ...tableStyles.actionCell }}>
-                                <div className="action-buttons" style={{ display: 'flex', gap: '6px' }}>
-                                  <Tooltip title={t('viewDetails')} arrow>
-                                    <IconButton
-                                      component={Link}
-                                      to={`/visit/${visit.id}`}
-                                      color="primary"
-                                      size="small"
-                                      onClick={preventClickDuringTransition}
-                                      disabled={isLanguageChanging}
-                                      sx={{
-                                        backgroundColor: theme.palette.mode === 'dark' ? 'rgba(25, 118, 210, 0.1)' : 'rgba(25, 118, 210, 0.05)',
-                                        padding: '6px',
-                                        borderRadius: '8px',
-                                        transition: 'all 0.2s ease',
-                                        '&:hover': {
-                                          backgroundColor: theme.palette.mode === 'dark' ? 'rgba(25, 118, 210, 0.2)' : 'rgba(25, 118, 210, 0.1)',
-                                          transform: 'translateY(-2px)',
-                                          boxShadow: theme.palette.mode === 'dark' ? '0 4px 8px rgba(0, 0, 0, 0.4)' : '0 4px 8px rgba(25, 118, 210, 0.15)'
-                                        }
-                                      }}
-                                    >
-                                      <VisibilityIcon fontSize="small" />
-                                    </IconButton>
-                                  </Tooltip>
-                                  
-                                  {/* Only show edit button for admin or if officer owns this visit */}
-                                  {(isAdmin || (isOfficer && exactOfficerMatch(visit.officerName, officerName))) && (
-                                    <Tooltip title={t('edit')} arrow>
-                                      <IconButton
-                                        component={Link}
-                                        to={`/edit/${visit.id}`}
-                                        color="info"
-                                        size="small"
-                                        onClick={preventClickDuringTransition}
-                                        disabled={isLanguageChanging}
-                                        sx={{
-                                          backgroundColor: theme.palette.mode === 'dark' ? 'rgba(3, 169, 244, 0.1)' : 'rgba(3, 169, 244, 0.05)',
-                                          padding: '6px',
-                                          borderRadius: '8px',
-                                          transition: 'all 0.2s ease',
-                                          '&:hover': {
-                                            backgroundColor: theme.palette.mode === 'dark' ? 'rgba(3, 169, 244, 0.2)' : 'rgba(3, 169, 244, 0.1)',
-                                            transform: 'translateY(-2px)',
-                                            boxShadow: theme.palette.mode === 'dark' ? '0 4px 8px rgba(0, 0, 0, 0.4)' : '0 4px 8px rgba(3, 169, 244, 0.15)'
-                                          }
-                                        }}
-                                      >
-                                        <EditIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                  )}
-                                  
-                                  {/* Only show delete button for admin or if officer owns this visit */}
-                                  {(isAdmin || (isOfficer && exactOfficerMatch(visit.officerName, officerName))) && (
-                                    <Tooltip title={t('delete')} arrow>
-                                      <IconButton
-                                        color="error"
-                                        size="small"
-                                        onClick={(e) => {
-                                          preventClickDuringTransition(e);
-                                          if (!isLanguageChanging && window.confirm(t('confirmDelete'))) {
-                                            handleDelete(visit.id);
-                                          }
-                                        }}
-                                        disabled={isLanguageChanging}
-                                        sx={{
-                                          backgroundColor: theme.palette.mode === 'dark' ? 'rgba(244, 67, 54, 0.1)' : 'rgba(244, 67, 54, 0.05)',
-                                          padding: '6px',
-                                          borderRadius: '8px',
-                                          transition: 'all 0.2s ease',
-                                          '&:hover': {
-                                            backgroundColor: theme.palette.mode === 'dark' ? 'rgba(244, 67, 54, 0.2)' : 'rgba(244, 67, 54, 0.1)',
-                                            transform: 'translateY(-2px)',
-                                            boxShadow: theme.palette.mode === 'dark' ? '0 4px 8px rgba(0, 0, 0, 0.4)' : '0 4px 8px rgba(244, 67, 54, 0.15)'
-                                          }
-                                        }}
-                                      >
-                                        <DeleteIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                  )}
-                                </div>
+                              <TableCell 
+                                colSpan={13} 
+                                align="center"
+                                sx={{ textAlign: 'center !important' }}
+                              >
+                                {t('noVisitsFound')}
                               </TableCell>
                             </motion.tr>
-                          );
-                        })
-                      )}
-                    </AnimatePresence>
-                  </TableBody>
-                </Table>
-                <TablePagination
-                  rowsPerPageOptions={[5, 10, 25, 50]}
-                  component="div"
-                  count={filteredVisits.length}
-                  rowsPerPage={rowsPerPage}
-                  page={page}
-                  onPageChange={handleChangePage}
-                  onRowsPerPageChange={handleChangeRowsPerPage}
-                  labelRowsPerPage={t('rowsPerPage')}
-                  labelDisplayedRows={({ from, to, count }) => 
-                    t('paginationDisplayedRows', { from, to, count })}
-                  sx={{
-                    '.MuiTablePagination-toolbar': {
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      padding: '12px',
-                      color: theme.palette.text.primary,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      '@media (max-width: 600px)': {
-                        justifyContent: 'center',
-                        flexDirection: 'column',
-                        gap: '12px'
-                      }
-                    },
-                    '.MuiTablePagination-selectRoot, .MuiTablePagination-input': {
-                      fontWeight: 500,
-                      backgroundColor: theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.03)',
-                      borderRadius: '8px',
-                      padding: '2px 6px',
-                      margin: '0 8px',
-                      border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'}`,
-                      transition: 'all 0.2s ease',
-                      '&:hover': {
-                        backgroundColor: theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
-                      }
-                    },
-                    '.MuiTablePagination-displayedRows': {
-                      fontWeight: 500,
-                      padding: '0 16px',
-                    },
-                    '.MuiTablePagination-actions': {
-                      display: 'flex',
-                      gap: '4px'
-                    },
-                    '.MuiIconButton-root': {
-                      backgroundColor: theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
-                      borderRadius: '8px',
-                      transition: 'all 0.2s ease',
-                      '&:hover': {
-                        backgroundColor: theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
-                        transform: 'translateY(-2px)'
-                      },
-                      '&.Mui-disabled': {
-                        opacity: 0.4
-                      }
-                    }
-                  }}
-                />
-              </TableContainer>
-            </motion.div>
+                          ) : (
+                            sortedAndPaginatedVisits.map((visit, index) => {
+                              const isSelected = selected.includes(visit.id);
+                              const isPending = !visit.officerAnswer || visit.officerAnswer === t('pendingStatus');
+                              
+                              return (
+                                <motion.tr
+                                  key={visit.id}
+                                  variants={rowVariants}
+                                  initial="hidden"
+                                  animate="visible"
+                                  exit="exit"
+                                  layout
+                                  style={{
+                                    cursor: 'pointer',
+                                    backgroundColor: isPending 
+                                      ? (theme.palette.mode === 'dark' ? 'rgba(255, 152, 0, 0.08)' : 'rgba(255, 152, 0, 0.03)')
+                                      : (theme.palette.mode === 'dark' ? 'rgba(0, 0, 0, 0.2)' : 'rgba(255, 255, 255, 0.6)'),
+                                    transition: 'all 0.15s ease-in-out',
+                                    '&:hover': {
+                                      backgroundColor: theme.palette.mode === 'dark' ? 'rgba(64, 181, 173, 0.1)' : 'rgba(64, 181, 173, 0.05)',
+                                      transform: 'translateY(-2px)',
+                                      boxShadow: theme.palette.mode === 'dark' ? '0 4px 12px rgba(0, 0, 0, 0.4)' : '0 4px 12px rgba(0, 0, 0, 0.08)',
+                                    },
+                                    boxShadow: theme.palette.mode === 'dark' 
+                                      ? '0 1px 3px rgba(0, 0, 0, 0.3)' 
+                                      : '0 1px 3px rgba(0, 0, 0, 0.05)',
+                                    borderRadius: '8px',
+                                    margin: '8px 0',
+                                    border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)'}`,
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.backgroundColor = theme.palette.mode === 'dark' 
+                                      ? 'rgba(64, 181, 173, 0.1)' 
+                                      : 'rgba(64, 181, 173, 0.05)';
+                                    e.currentTarget.style.transform = 'translateY(-2px)';
+                                    e.currentTarget.style.boxShadow = theme.palette.mode === 'dark' 
+                                      ? '0 4px 12px rgba(0, 0, 0, 0.4)' 
+                                      : '0 4px 12px rgba(0, 0, 0, 0.08)';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.backgroundColor = isPending 
+                                      ? (theme.palette.mode === 'dark' ? 'rgba(255, 152, 0, 0.08)' : 'rgba(255, 152, 0, 0.03)')
+                                      : (theme.palette.mode === 'dark' ? 'rgba(0, 0, 0, 0.2)' : 'rgba(255, 255, 255, 0.6)');
+                                    e.currentTarget.style.transform = 'translateY(0)';
+                                    e.currentTarget.style.boxShadow = theme.palette.mode === 'dark' 
+                                      ? '0 1px 3px rgba(0, 0, 0, 0.3)' 
+                                      : '0 1px 3px rgba(0, 0, 0, 0.05)';
+                                  }}
+                                >
+                                  <TableCell padding="checkbox">
+                                    <Checkbox
+                                      checked={isSelected}
+                                      onChange={() => handleCheckboxClick(visit.id)}
+                                    />
+                                  </TableCell>
+                                  <TableCell style={{ ...tableStyles.cell, ...tableStyles.numberCell }}>
+                                    {formatNumber((page * rowsPerPage) + index + 1, i18n.language)}
+                                  </TableCell>
+                                  <TableCell style={{ ...tableStyles.cell, maxWidth: '120px' }}>
+                                    <Tooltip title={visit?.name || 'N/A'} arrow>
+                                      <span>{visit?.name || 'N/A'}</span>
+                                    </Tooltip>
+                                  </TableCell>
+                                  <TableCell style={{ ...tableStyles.cell, ...tableStyles.phoneCell }}>{visit?.phone || 'N/A'}</TableCell>
+                                  <TableCell style={{ ...tableStyles.cell, maxWidth: '150px' }}>
+                                    <Tooltip title={visit?.address || 'N/A'} arrow>
+                                      <span>{visit?.address || 'N/A'}</span>
+                                    </Tooltip>
+                                  </TableCell>
+                                  <TableCell style={{ ...tableStyles.cell, ...tableStyles.dateCell }}>
+                                    {renderCell(visit?.date, 'date')}
+                                  </TableCell>
+                                  <TableCell style={{ ...tableStyles.cell, ...tableStyles.timeCell }}>
+                                    {renderCell(visit?.timeIn, 'time')}
+                                  </TableCell>
+                                  <TableCell style={{ ...tableStyles.cell, ...tableStyles.timeCell }}>
+                                    {renderCell(visit?.timeOut, 'time')}
+                                  </TableCell>
+                                  <TableCell style={{ ...tableStyles.cell, ...tableStyles.durationCell }}>
+                                    {renderCell(visit?.duration, 'duration')}
+                                  </TableCell>
+                                  <TableCell style={{ ...tableStyles.cell, maxWidth: '150px' }}>
+                                    <Tooltip title={visit?.officerName || 'N/A'} arrow>
+                                      <span>{visit?.officerName || 'N/A'}</span>
+                                    </Tooltip>
+                                  </TableCell>
+                                  <TableCell style={{ ...tableStyles.cell, maxWidth: '150px' }}>
+                                    <Tooltip title={visit?.userQuestion || 'N/A'} arrow>
+                                      <span>{visit?.userQuestion || 'N/A'}</span>
+                                    </Tooltip>
+                                  </TableCell>
+                                  <TableCell style={{ ...tableStyles.cell, ...tableStyles.dateCell }}>
+                                    {renderCell(visit?.responseDate, 'date')}
+                                  </TableCell>
+                                  <TableCell style={{ ...tableStyles.cell, maxWidth: '150px' }}>
+                                    <Tooltip title={visit?.officerAnswer || 'N/A'} arrow>
+                                      <span>{visit?.officerAnswer || 'N/A'}</span>
+                                    </Tooltip>
+                                  </TableCell>
+                                  <TableCell style={{ ...tableStyles.cell, ...tableStyles.actionCell }}>
+                                    <div className="action-buttons" style={{ display: 'flex', gap: '6px' }}>
+                                      <Tooltip title={t('viewDetails')} arrow>
+                                        <IconButton
+                                          component={Link}
+                                          to={`/visit/${visit.id}`}
+                                          color="primary"
+                                          size="small"
+                                          onClick={preventClickDuringTransition}
+                                          disabled={isLanguageChanging}
+                                          sx={{
+                                            backgroundColor: theme.palette.mode === 'dark' ? 'rgba(25, 118, 210, 0.1)' : 'rgba(25, 118, 210, 0.05)',
+                                            padding: '6px',
+                                            borderRadius: '8px',
+                                            transition: 'all 0.2s ease',
+                                            '&:hover': {
+                                              backgroundColor: theme.palette.mode === 'dark' ? 'rgba(25, 118, 210, 0.2)' : 'rgba(25, 118, 210, 0.1)',
+                                              transform: 'translateY(-2px)',
+                                              boxShadow: theme.palette.mode === 'dark' ? '0 4px 8px rgba(0, 0, 0, 0.4)' : '0 4px 8px rgba(25, 118, 210, 0.15)'
+                                            }
+                                          }}
+                                        >
+                                          <VisibilityIcon fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
+                                      
+                                      {/* Only show edit button for admin or if officer owns this visit */}
+                                      {(isAdmin || (isOfficer && exactOfficerMatch(visit.officerName, officerName))) && (
+                                        <Tooltip title={t('edit')} arrow>
+                                          <IconButton
+                                            component={Link}
+                                            to={`/edit/${visit.id}`}
+                                            color="info"
+                                            size="small"
+                                            onClick={preventClickDuringTransition}
+                                            disabled={isLanguageChanging}
+                                            sx={{
+                                              backgroundColor: theme.palette.mode === 'dark' ? 'rgba(3, 169, 244, 0.1)' : 'rgba(3, 169, 244, 0.05)',
+                                              padding: '6px',
+                                              borderRadius: '8px',
+                                              transition: 'all 0.2s ease',
+                                              '&:hover': {
+                                                backgroundColor: theme.palette.mode === 'dark' ? 'rgba(3, 169, 244, 0.2)' : 'rgba(3, 169, 244, 0.1)',
+                                                transform: 'translateY(-2px)',
+                                                boxShadow: theme.palette.mode === 'dark' ? '0 4px 8px rgba(0, 0, 0, 0.4)' : '0 4px 8px rgba(3, 169, 244, 0.15)'
+                                              }
+                                            }}
+                                          >
+                                            <EditIcon fontSize="small" />
+                                          </IconButton>
+                                        </Tooltip>
+                                      )}
+                                      
+                                      {/* Only show delete button for admin or if officer owns this visit */}
+                                      {(isAdmin || (isOfficer && exactOfficerMatch(visit.officerName, officerName))) && (
+                                        <Tooltip title={t('delete')} arrow>
+                                          <IconButton
+                                            color="error"
+                                            size="small"
+                                            onClick={(e) => {
+                                              preventClickDuringTransition(e);
+                                              if (!isLanguageChanging && window.confirm(t('confirmDelete'))) {
+                                                handleDelete(visit.id);
+                                              }
+                                            }}
+                                            disabled={isLanguageChanging}
+                                            sx={{
+                                              backgroundColor: theme.palette.mode === 'dark' ? 'rgba(244, 67, 54, 0.1)' : 'rgba(244, 67, 54, 0.05)',
+                                              padding: '6px',
+                                              borderRadius: '8px',
+                                              transition: 'all 0.2s ease',
+                                              '&:hover': {
+                                                backgroundColor: theme.palette.mode === 'dark' ? 'rgba(244, 67, 54, 0.2)' : 'rgba(244, 67, 54, 0.1)',
+                                                transform: 'translateY(-2px)',
+                                                boxShadow: theme.palette.mode === 'dark' ? '0 4px 8px rgba(0, 0, 0, 0.4)' : '0 4px 8px rgba(244, 67, 54, 0.15)'
+                                              }
+                                            }}
+                                          >
+                                            <DeleteIcon fontSize="small" />
+                                          </IconButton>
+                                        </Tooltip>
+                                      )}
+                                    </div>
+                                  </TableCell>
+                                </motion.tr>
+                              );
+                            })
+                          )}
+                        </AnimatePresence>
+                      </TableBody>
+                    </Table>
+                    <TablePagination
+                      rowsPerPageOptions={[5, 10, 25, 50]}
+                      component="div"
+                      count={filteredVisits.length}
+                      rowsPerPage={rowsPerPage}
+                      page={page}
+                      onPageChange={handleChangePage}
+                      onRowsPerPageChange={handleChangeRowsPerPage}
+                      labelRowsPerPage={t('rowsPerPage')}
+                      labelDisplayedRows={({ from, to, count }) => 
+                        t('paginationDisplayedRows', { from, to, count })}
+                      sx={{
+                        '.MuiTablePagination-toolbar': {
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          padding: '12px',
+                          color: theme.palette.text.primary,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px',
+                          '@media (max-width: 600px)': {
+                            justifyContent: 'center',
+                            flexDirection: 'column',
+                            gap: '12px'
+                          }
+                        },
+                        '.MuiTablePagination-selectRoot, .MuiTablePagination-input': {
+                          fontWeight: 500,
+                          backgroundColor: theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.03)',
+                          borderRadius: '8px',
+                          padding: '2px 6px',
+                          margin: '0 8px',
+                          border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)'}`,
+                          transition: 'all 0.2s ease',
+                          '&:hover': {
+                            backgroundColor: theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
+                          }
+                        },
+                        '.MuiTablePagination-displayedRows': {
+                          fontWeight: 500,
+                          padding: '0 16px',
+                        },
+                        '.MuiTablePagination-actions': {
+                          display: 'flex',
+                          gap: '4px'
+                        },
+                        '.MuiIconButton-root': {
+                          backgroundColor: theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+                          borderRadius: '8px',
+                          transition: 'all 0.2s ease',
+                          '&:hover': {
+                            backgroundColor: theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)',
+                            transform: 'translateY(-2px)'
+                          },
+                          '&.Mui-disabled': {
+                            opacity: 0.4
+                          }
+                        }
+                      }}
+                    />
+                  </TableContainer>
+                </motion.div>
+              </>
+            )}
           </>
         )}
       </motion.div>
