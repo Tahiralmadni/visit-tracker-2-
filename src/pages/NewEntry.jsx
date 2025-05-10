@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, createRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TextField, Button, Container, FormHelperText, FormControl, InputLabel, Select, MenuItem, Typography, Box, CircularProgress } from '@mui/material';
+import { TextField, Button, Container, FormHelperText, FormControl, InputLabel, Select, MenuItem, Typography, Box, CircularProgress, Chip } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline'; // Import icon
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline'; // Add this for question add button
@@ -14,6 +14,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import dayjs from 'dayjs';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../contexts/AuthContext';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 
 const datePickerSx = {
   '& .MuiInputBase-root': {
@@ -84,11 +85,12 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
   const [timeOut, setTimeOut] = useState(visit?.timeOut ? dayjs(visit.timeOut, 'HH:mm') : dayjs());
   const [responseDate, setResponseDate] = useState(visit?.responseDate ? dayjs(visit.responseDate) : dayjs());
   
-  // Replace single userQuestion with questions array
+  // Initialize questions as an array of tags
   const initialQuestions = visit?.userQuestion 
     ? visit.userQuestion.split(/\(\d+\)/).filter(q => q.trim()).map(q => q.trim())
-    : [''];
+    : [];
   const [questions, setQuestions] = useState(initialQuestions);
+  const [currentQuestion, setCurrentQuestion] = useState('');
   
   const [officerAnswer, setOfficerAnswer] = useState(visit?.officerAnswer || '');
   const [address, setAddress] = useState(visit?.address || '');
@@ -98,7 +100,7 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
     isOfficer ? currentUserOfficerName : (visit?.officerName || '')
   );
   
-  const [matchedClientData, setMatchedClientData] = useState(null);
+  const [matchedClients, setMatchedClients] = useState([]);
   const [isCheckingName, setIsCheckingName] = useState(false);
   const [debounceTimeout, setDebounceTimeout] = useState(null);
 
@@ -107,7 +109,7 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
     name: '',
     phone: '',
     address: '',
-    questions: [],
+    questions: '',
     timeIn: '',
     timeOut: '',
     officerName: '',
@@ -126,10 +128,20 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
 
   const isRtl = i18n.language === 'ur';
 
-  // Update error messages to use translations
+  // Create refs array for question fields
+  const questionRefs = useRef(Array(questions.length).fill().map(() => createRef()));
+
+  // Update refs when questions length changes
+  useEffect(() => {
+    questionRefs.current = Array(questions.length).fill().map((_, i) => 
+      questionRefs.current[i] || createRef()
+    );
+  }, [questions.length]);
+
+  // Updated validation function
   const validateForm = () => {
     const newErrors = {
-      questions: Array(questions.length).fill('')
+      questions: ''
     };
     let isValid = true;
 
@@ -151,16 +163,9 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
       isValid = false;
     }
 
-    // Validate all questions
-    let hasValidQuestion = false;
-    questions.forEach((question, index) => {
-      if (question.trim()) {
-        hasValidQuestion = true;
-      }
-    });
-
-    if (!hasValidQuestion) {
-      newErrors.questions[0] = t('questionRequired');
+    // Validate questions
+    if (questions.length === 0) {
+      newErrors.questions = t('questionRequired');
       isValid = false;
     }
 
@@ -208,66 +213,55 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
   // Debounced function to check for existing names and get data
   const checkExistingName = useCallback(async (currentName) => {
     const trimmedName = currentName.trim();
-    if (!trimmedName || trimmedName.length < 3) { // Only search if name has at least 3 chars
-      setMatchedClientData(null); // Clear any previous match
+    if (!trimmedName || trimmedName.length < 3) {
+      setMatchedClients([]);
       setIsCheckingName(false);
       return;
     }
     setIsCheckingName(true);
-    setMatchedClientData(null); // Clear previous match before new search
+    setMatchedClients([]);
     try {
       const q = query(
         visitsCollection,
-        where('name', '==', trimmedName),
-        limit(1) // We only need the first match to autofill
+        where('name', '==', trimmedName)
       );
       const querySnapshot = await getDocs(q);
       if (!querySnapshot.empty) {
-        // Found a match, store its data
-        const firstMatchData = querySnapshot.docs[0].data();
-        setMatchedClientData({
-          name: firstMatchData.name, // Keep name for display
-          phone: firstMatchData.phone,
-          address: firstMatchData.address
-        });
+        // Collect all matches
+        const clients = querySnapshot.docs.map(doc => doc.data());
+        setMatchedClients(clients);
       } else {
-        setMatchedClientData(null); // No match found
+        setMatchedClients([]);
       }
     } catch (error) {
       console.error("Error checking name:", error);
-      setMatchedClientData(null); // Clear matches on error
+      setMatchedClients([]);
     } finally {
       setIsCheckingName(false);
     }
-  }, []); // Empty dependency array
+  }, []);
 
   const handleNameChange = (e) => {
     const newName = e.target.value;
     setName(newName);
     if (errors.name) {
-      setErrors({ ...errors, name: '' }); // Clear name error on change
+      setErrors({ ...errors, name: '' });
     }
-
-    // Clear previous debounce timer
     if (debounceTimeout) {
       clearTimeout(debounceTimeout);
     }
-
-    // Set a new timer
     const newTimeout = setTimeout(() => {
       checkExistingName(newName);
-    }, 500); // 500ms delay
+    }, 500);
     setDebounceTimeout(newTimeout);
-    setMatchedClientData(null); // Clear match data immediately when user types again
+    setMatchedClients([]);
   };
 
   // Function to apply matched data to the form
-  const applyMatchedData = () => {
-    if (matchedClientData) {
-      setPhone(matchedClientData.phone || ''); // Use matched phone or empty string
-      setAddress(matchedClientData.address || ''); // Use matched address or empty string
-      // Optionally clear the suggestion after applying
-      // setMatchedClientData(null); 
+  const applyMatchedData = (client) => {
+    if (client) {
+      setPhone(client.phone || '');
+      setAddress(client.address || '');
     }
   };
 
@@ -300,6 +294,40 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
     }
   }, [isEditing, visit, isOfficer, currentUserOfficerName, navigate]);
 
+  // Handle adding a question tag when Enter is pressed
+  const handleAddQuestionTag = (e) => {
+    e.preventDefault();
+    const trimmedQuestion = currentQuestion.trim();
+    
+    if (trimmedQuestion) {
+      setQuestions([...questions, trimmedQuestion]);
+      setCurrentQuestion('');
+      
+      // Clear question error if any
+      if (errors.questions) {
+        setErrors({ ...errors, questions: '' });
+      }
+    }
+  };
+  
+  // Handle deleting a question tag
+  const handleDeleteQuestionTag = (indexToDelete) => {
+    setQuestions(questions.filter((_, index) => index !== indexToDelete));
+  };
+  
+  // Handle question text change
+  const handleQuestionChange = (e) => {
+    setCurrentQuestion(e.target.value);
+  };
+  
+  // Handle key press in question field
+  const handleQuestionKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAddQuestionTag(e);
+    }
+  };
+
   const handleFormSubmit = async (e) => {
     if (isLanguageChanging) {
       preventClickDuringTransition(e);
@@ -317,8 +345,7 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
 
       // Format questions as "(1)question1 (2)question2..." format
       const formattedQuestions = questions
-        .filter(q => q.trim())
-        .map((q, i) => `(${i+1})${q.trim()}`)
+        .map((q, i) => `(${i+1})${q}`)
         .join(' ');
 
       // If officer, ensure their name is set correctly
@@ -381,92 +408,6 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
     };
   }, []);
 
-  // Handle adding a new question
-  const handleAddQuestion = () => {
-    setQuestions([...questions, '']);
-    setErrors({...errors, questions: [...errors.questions, '']});
-  };
-  
-  // Handle question change
-  const handleQuestionChange = (index, value) => {
-    const newQuestions = [...questions];
-    newQuestions[index] = value;
-    setQuestions(newQuestions);
-    
-    // Clear error for this question if any
-    if (errors.questions && errors.questions[index]) {
-      const newQuestionErrors = [...errors.questions];
-      newQuestionErrors[index] = '';
-      setErrors({...errors, questions: newQuestionErrors});
-    }
-  };
-  
-  // Handle key press in question field
-  const handleQuestionKeyPress = (e, index) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (index === questions.length - 1) {
-        // If it's the last question, add a new one
-        handleAddQuestion();
-        // Focus will be handled in useEffect
-      } else {
-        // Focus the next question field
-        const nextField = document.getElementById(`question-${index + 1}`);
-        if (nextField) nextField.focus();
-      }
-    }
-  };
-  
-  // Focus the newly added question field
-  useEffect(() => {
-    const lastIndex = questions.length - 1;
-    if (lastIndex > 0) {
-      const lastField = document.getElementById(`question-${lastIndex}`);
-      if (lastField) lastField.focus();
-    }
-  }, [questions.length]);
-
-  // Question Input Component
-  const QuestionInputs = () => {
-    return (
-      <div className="questions-container">
-        {questions.map((question, index) => (
-          <div key={index} className="question-field-container" style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
-            <Typography variant="body1" style={{ marginRight: '8px', minWidth: '24px' }}>
-              {(index + 1) + '.'}
-            </Typography>
-            <TextField
-              id={`question-${index}`}
-              fullWidth
-              multiline
-              rows={2}
-              placeholder={index === 0 ? t('question') : t('additionalQuestion')}
-              value={question}
-              onChange={(e) => handleQuestionChange(index, e.target.value)}
-              onKeyPress={(e) => handleQuestionKeyPress(e, index)}
-              margin="dense"
-              error={!!(errors.questions && errors.questions[index])}
-              helperText={errors.questions && errors.questions[index]}
-              inputProps={{
-                dir: i18n.language === 'ur' ? 'rtl' : 'ltr'
-              }}
-              sx={inputStyles(isRtl)}
-            />
-          </div>
-        ))}
-        <Button
-          variant="text"
-          color="primary"
-          startIcon={<AddCircleOutlineIcon />}
-          onClick={handleAddQuestion}
-          sx={{ mt: 1 }}
-        >
-          {t('addQuestion')}
-        </Button>
-      </div>
-    );
-  };
-
   if (loading) {
     return <LoadingSpinner fullscreen />;
   }
@@ -491,39 +432,64 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
             fullWidth
             label={t('name')}
             value={name}
-            onChange={handleNameChange} // Use the new handler
+            onChange={handleNameChange}
             margin="normal"
             error={!!errors.name}
-            helperText={errors.name}
+            helperText={
+              errors.name && (
+                <span style={{ display: 'flex', alignItems: 'center', color: '#d32f2f' }}>
+                  <ErrorOutlineIcon fontSize="small" style={{ marginRight: 4 }} />
+                  {errors.name}
+                </span>
+              )
+            }
             inputProps={{
               dir: i18n.language === 'ur' ? 'rtl' : 'ltr'
             }}
             sx={inputStyles(isRtl)}
           />
           {/* Display Name Check Status and Autofill Suggestion */}
-          <Box sx={{ minHeight: '36px', mt: 1, mb: 1, textAlign: isRtl ? 'right' : 'left', display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box sx={{ minHeight: '36px', mt: 1, mb: 1, textAlign: isRtl ? 'right' : 'left', display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
             {isCheckingName && <CircularProgress size={20} />}
-            {!isCheckingName && matchedClientData && (
+            {!isCheckingName && matchedClients.length === 1 && (
               <>
-                <Typography variant="caption" color="info.main"> {/* Changed color */}
-                  {t('clientFoundSuggestion', { name: matchedClientData.name })}
+                <Typography variant="caption" color="info.main">
+                  {t('clientFoundSuggestion', { name: matchedClients[0].name })}
                 </Typography>
-                <Button 
-                  size="small" 
-                  variant="text" // Change variant to text
-                  onClick={applyMatchedData}
-                  startIcon={<CheckCircleOutlineIcon fontSize="small" />} // Add icon
-                  sx={{ textTransform: 'none', ml: 0.5 }} // Adjust styling
+                <Button
+                  size="small"
+                  variant="text"
+                  onClick={() => applyMatchedData(matchedClients[0])}
+                  startIcon={<CheckCircleOutlineIcon fontSize="small" />}
+                  sx={{ textTransform: 'none', ml: 0.5 }}
                 >
                   {t('useDataButton')}
                 </Button>
               </>
             )}
-             {!isCheckingName && !matchedClientData && name.trim().length > 0 && name.trim().length < 3 && (
-               <Typography variant="caption" color="text.secondary"> {/* Adjusted color */}
-                 {t('typeMoreCharsForCheck')}
-               </Typography>
-             )}
+            {!isCheckingName && matchedClients.length > 1 && (
+              <>
+                <Typography variant="caption" color="info.main" sx={{ mr: 1 }}>
+                  {t('multipleClientsFound')}
+                </Typography>
+                {matchedClients.map((client, idx) => (
+                  <Button
+                    key={idx}
+                    size="small"
+                    variant="outlined"
+                    onClick={() => applyMatchedData(client)}
+                    sx={{ textTransform: 'none', ml: 0.5, mb: 0.5 }}
+                  >
+                    {client.name} ({formatDisplayPhone(client.phone)})
+                  </Button>
+                ))}
+              </>
+            )}
+            {!isCheckingName && matchedClients.length === 0 && name.trim().length > 0 && name.trim().length < 3 && (
+              <Typography variant="caption" color="text.secondary">
+                {t('typeMoreCharsForCheck')}
+              </Typography>
+            )}
           </Box>
           <TextField
             required
@@ -533,12 +499,19 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
             onChange={handlePhoneChange}
             margin="normal"
             error={!!errors.phone}
-            helperText={errors.phone}
+            helperText={
+              errors.phone && (
+                <span style={{ display: 'flex', alignItems: 'center', color: '#d32f2f' }}>
+                  <ErrorOutlineIcon fontSize="small" style={{ marginRight: 4 }} />
+                  {errors.phone}
+                </span>
+              )
+            }
             inputProps={{
               maxLength: 11,
               inputMode: 'numeric',
               pattern: '[0-9٠١٢٣٤٥٦٧٨٩]*',
-              dir: 'ltr' // Keep phone numbers left-to-right
+              dir: 'ltr'
             }}
             sx={inputStyles(isRtl)}
           />
@@ -550,7 +523,14 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
             onChange={(e) => setAddress(e.target.value)}
             margin="normal"
             error={!!errors.address}
-            helperText={errors.address}
+            helperText={
+              errors.address && (
+                <span style={{ display: 'flex', alignItems: 'center', color: '#d32f2f' }}>
+                  <ErrorOutlineIcon fontSize="small" style={{ marginRight: 4 }} />
+                  {errors.address}
+                </span>
+              )
+            }
             inputProps={{
               dir: i18n.language === 'ur' ? 'rtl' : 'ltr'
             }}
@@ -602,7 +582,12 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
               />
             )}
             {errors.officerName && (
-              <FormHelperText>{errors.officerName}</FormHelperText>
+              <FormHelperText>
+                <span style={{ display: 'flex', alignItems: 'center', color: '#d32f2f' }}>
+                  <ErrorOutlineIcon fontSize="small" style={{ marginRight: 4 }} />
+                  {errors.officerName}
+                </span>
+              </FormHelperText>
             )}
           </FormControl>
           <LocalizationProvider dateAdapter={AdapterDayjs}>
@@ -622,7 +607,6 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
                 },
                 popper: {
                   sx: {
-                    // Ensure calendar popup is always LTR
                     direction: 'ltr',
                     '& .MuiPickersCalendarHeader-root': {
                       direction: 'ltr'
@@ -647,7 +631,12 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
                   fullWidth: true,
                   required: true,
                   error: !!errors.timeIn,
-                  helperText: errors.timeIn,
+                  helperText: errors.timeIn && (
+                    <span style={{ display: 'flex', alignItems: 'center', color: '#d32f2f' }}>
+                      <ErrorOutlineIcon fontSize="small" style={{ marginRight: 4 }} />
+                      {errors.timeIn}
+                    </span>
+                  ),
                   sx: inputStyles(isRtl)
                 }
               }}
@@ -668,7 +657,12 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
                   fullWidth: true,
                   required: true,
                   error: !!errors.timeOut,
-                  helperText: errors.timeOut,
+                  helperText: errors.timeOut && (
+                    <span style={{ display: 'flex', alignItems: 'center', color: '#d32f2f' }}>
+                      <ErrorOutlineIcon fontSize="small" style={{ marginRight: 4 }} />
+                      {errors.timeOut}
+                    </span>
+                  ),
                   sx: inputStyles(isRtl)
                 }
               }}
@@ -699,9 +693,63 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
             marginTop: '16px',
             marginBottom: '8px'
           }}>
-            {t('questions')} *
+            {t('questions')} * ({questions.length} {t('questions')})
           </Typography>
-          <QuestionInputs />
+          
+          {/* Question input field */}
+          <form onSubmit={handleAddQuestionTag} style={{ marginBottom: '8px' }} noValidate>
+            <TextField
+              fullWidth
+              multiline
+              minRows={2}
+              maxRows={6}
+              value={currentQuestion}
+              onChange={handleQuestionChange}
+              onKeyPress={handleQuestionKeyPress}
+              placeholder={t('typeQuestionAndPressEnter')}
+              margin="dense"
+              error={!!errors.questions}
+              helperText={
+                errors.questions && (
+                  <span style={{ display: 'flex', alignItems: 'center', color: '#d32f2f' }}>
+                    <ErrorOutlineIcon fontSize="small" style={{ marginRight: 4 }} />
+                    {errors.questions}
+                  </span>
+                )
+              }
+              inputProps={{
+                dir: i18n.language === 'ur' ? 'rtl' : 'ltr'
+              }}
+              sx={inputStyles(isRtl)}
+            />
+          </form>
+          
+          {/* Display question tags */}
+          <Box 
+            sx={{ 
+              display: 'flex', 
+              flexWrap: 'wrap', 
+              gap: 1,
+              mb: 2
+            }}
+          >
+            {questions.map((question, index) => (
+              <Chip
+                key={index}
+                label={question}
+                onDelete={() => handleDeleteQuestionTag(index)}
+                color="primary"
+                variant="outlined"
+                sx={{ 
+                  direction: 'ltr',
+                  '& .MuiChip-label': {
+                    direction: i18n.language === 'ur' ? 'rtl' : 'ltr'
+                  }
+                }}
+              />
+            ))}
+          </Box>
+          
           <TextField
             fullWidth
             multiline

@@ -171,6 +171,7 @@
   "searchPlaceholder": "تلاش کریں...",
   "nameExistsWarning": "'{{name}}' نام کا کلائنٹ پہلے سے موجود ہو سکتا ہے۔ براہ کرم تصدیق کریں۔",
   "typeMoreCharsForCheck": "موجودہ ناموں کی جانچ کے لیے کم از کم 3 حروف ٹائپ کریں۔",
+  "typeQuestionAndPressEnter": "سوال ٹائپ کریں اور اینٹر دبائیں",
   "clientFoundSuggestion": "کلائنٹ '{{name}}' مل گیا۔",
   "useDataButton": "ڈیٹا استعمال کریں"
 }

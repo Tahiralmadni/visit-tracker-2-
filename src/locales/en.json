@@ -165,5 +165,8 @@
     }
   },
   "nameExistsWarning": "A client named '{{name}}' might already exist. Please verify.",
-  "typeMoreCharsForCheck": "Type at least 3 characters to check for existing names."
+  "typeMoreCharsForCheck": "Type at least 3 characters to check for existing names.",
+  "typeQuestionAndPressEnter": "Type question and press Enter to add",
+  "clientFoundSuggestion": "Client named '{{name}}' found in records",
+  "useDataButton": "Use this data"
 }
