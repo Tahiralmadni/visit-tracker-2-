@@ -29,6 +29,8 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
 import { useAuth } from '../contexts/AuthContext';
+import StorageBanner from '../components/StorageBanner';
+import { canAddEntries, getStorageStatus } from '../utils/storageStatus';
 
 // List of officers - must match the ones used in the system
 const OFFICERS = ['Naeem', 'Abid', 'Sajid', 'Raza Muhammed', 'Masood'];
@@ -57,6 +59,12 @@ const formatNumber = (num, language) => {
     return String(num).replace(/[0-9]/g, d => '٠١٢٣٤٥٦٧٨٩'[d]);
   }
   return num;
+};
+
+// Utility function to convert Urdu numbers to English
+const convertToEnglishNumbers = (str) => {
+  if (!str) return '';
+  return str.replace(/[٠١٢٣٤٥٦٧٨٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d));
 };
 
 // Add search handling utils
@@ -188,6 +196,34 @@ const countVisitsPerOfficer = (visits, officerName, selectedMonth = null) => {
   }).length;
 };
 
+// Function to calculate total minutes for each officer
+const countTotalMinutes = (visits, officerName = null, selectedMonth = null) => {
+  // Filter visits by officer and month if provided
+  const filteredVisits = visits.filter(visit => {
+    // If officerName is provided, filter by officer
+    if (officerName && !exactOfficerMatch(visit.officerName, officerName)) {
+      return false;
+    }
+    
+    // If selectedMonth is provided, filter by month
+    if (selectedMonth) {
+      const visitMonth = dayjs(visit.date).format('MM');
+      if (visitMonth !== selectedMonth) {
+        return false;
+      }
+    }
+    
+    return true;
+  });
+  
+  // Sum up all the durations
+  return filteredVisits.reduce((total, visit) => {
+    // Convert duration string to number, handling both Urdu and English numbers
+    const duration = visit.duration ? parseInt(convertToEnglishNumbers(visit.duration)) : 0;
+    return isNaN(duration) ? total : total + duration;
+  }, 0);
+};
+
 function Dashboard({ visits = [], onDelete }) {
   // Add auth hook
   const { logout, userRole, officerName, isAdmin, isOfficer } = useAuth();
@@ -207,9 +243,12 @@ function Dashboard({ visits = [], onDelete }) {
   const [isLanguageChanging, setIsLanguageChanging] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [visitsPerMonth, setVisitsPerMonth] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [totalMonthlyQuestions, setTotalMonthlyQuestions] = useState(0);
   const [currentMonthName, setCurrentMonthName] = useState('');
+  const [currentMonth, setCurrentMonth] = useState(dayjs().format('MM'));
+  const [displayMonthName, setDisplayMonthName] = useState('');  // New state for display month name
+  const [displayMonth, setDisplayMonth] = useState(dayjs().format('MM'));  // New state for display month
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const theme = useMUITheme();
@@ -466,47 +505,51 @@ function Dashboard({ visits = [], onDelete }) {
 
   // Filter visits based on user role when visits prop changes
   useEffect(() => {
-    // Add debugging information
-    console.log("Current user role:", userRole);
-    console.log("Is officer:", isOfficer);
-    console.log("Officer name:", officerName);
-    console.log("Is admin:", isAdmin);
+    // Add small delay to ensure auth state is fully loaded
+    const loadData = async () => {
+      // Wait for auth state to be ready
+      if (userRole === undefined || userRole === null) {
+        console.log("Waiting for auth state...");
+        return;
+      }
+      
+      console.log("Current user role:", userRole);
+      console.log("Is officer:", isOfficer);
+      console.log("Officer name:", officerName);
+      console.log("Is admin:", isAdmin);
+      
+      // Set loading state
+      setIsLoading(true);
+      
+      // Small delay to ensure state is synchronized
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // If user is an officer, only show their visits
+      if (isOfficer && officerName) {
+        console.log("Filtering visits for officer:", officerName);
+        console.log("Total visits before filtering:", visits.length);
+        
+        const officerVisits = visits.filter(visit => {
+          // Important: Use EXACT matching here - make sure officers only see their own visits
+          const isMatch = exactOfficerMatch(visit.officerName, officerName);
+          return isMatch;
+        });
+        
+        console.log("Officer visits after filtering:", officerVisits.length);
+        setLocalVisits(officerVisits);
+      } else if (isAdmin) {
+        // For admin, show all visits
+        console.log("Showing all visits for admin");
+        setLocalVisits(visits);
+      } else {
+        // For regular users, show no visits
+        console.log("Regular user - No access to visits");
+        setLocalVisits([]);
+      }
+    };
     
-    // If user is an officer, only show their visits
-    if (isOfficer && officerName) {
-      console.log("Filtering visits for officer:", officerName);
-      console.log("Total visits before filtering:", visits.length);
-      
-      const officerVisits = visits.filter(visit => {
-        // Important: Use EXACT matching here - make sure officers only see their own visits
-        const isMatch = exactOfficerMatch(visit.officerName, officerName);
-        
-        // Debug info
-        console.log(`Visit officer: "${visit.officerName}", Current officer: "${officerName}", Match: ${isMatch}`);
-        
-        if (isMatch) {
-          console.log("MATCHED VISIT:", visit);
-        }
-        return isMatch;
-      });
-      
-      console.log("Officer visits after filtering:", officerVisits.length);
-      setLocalVisits(officerVisits);
-    } else if (isAdmin) {
-      // For admin, show all visits
-      console.log("Showing all visits for admin");
-      setLocalVisits(visits);
-    } else {
-      // For regular users, show no visits
-      console.log("Regular user - No access to visits");
-      setLocalVisits([]);
-    }
-    setIsLoading(true);
-
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 300); // Reduced from 500ms to 300ms
-
+    loadData();
+    
     // Extract unique values for dropdowns (only for admin and officers)
     if (isAdmin || isOfficer) {
       const officerNames = [...new Set(visits.map(visit => visit.officerName).filter(name => name))];
@@ -523,6 +566,13 @@ function Dashboard({ visits = [], onDelete }) {
       const currentMonth = dayjs().format('MM');
       const currentMonthNameKey = months.find(m => m.value === currentMonth)?.label || '';
       setCurrentMonthName(currentMonthNameKey);
+      setCurrentMonth(currentMonth);
+      
+      // Initialize display month with current month if not set
+      if (!displayMonth) {
+        setDisplayMonth(currentMonth);
+        setDisplayMonthName(currentMonthNameKey);
+      }
 
       // Count total questions for current month
       // If officer, only count their questions
@@ -539,7 +589,7 @@ function Dashboard({ visits = [], onDelete }) {
       }
       
       // Count questions in the current month using proper question counting
-      const filteredVisits = visitsToCount.filter(v => dayjs(v.date).format('MM') === currentMonth);
+      const filteredVisits = visitsToCount.filter(v => dayjs(v.date).format('MM') === displayMonth || displayMonth === currentMonth);
       const questionsCount = countQuestionsInVisits(filteredVisits);
       
       console.log(`Total questions for ${isOfficer ? officerName : 'admin'}: ${questionsCount}`);
@@ -565,15 +615,18 @@ function Dashboard({ visits = [], onDelete }) {
     } else {
       // Reset all data for regular users
       setUniqueOfficerNames([]);
+      setUniqueAddresses([]);
       setUniqueDates([]);
       setUniqueDurations([]);
-      setUniqueAddresses([]);
       setTotalMonthlyQuestions(0);
       setVisitsPerMonth([]);
     }
     
-    return () => clearTimeout(timer);
-  }, [visits, isOfficer, officerName, isAdmin, userRole]);
+    // Clear loading state after data is processed
+    setTimeout(() => {
+      setIsLoading(false);
+    }, 300);
+  }, [visits, isOfficer, officerName, isAdmin, displayMonth, currentMonth, userRole]);
 
   const handleDelete = async (id) => {
     try {
@@ -636,12 +689,33 @@ function Dashboard({ visits = [], onDelete }) {
       if (!selectedMonths.includes('all')) {
         const allMonths = Array.from({length: 12}, (_, i) => (i + 1).toString().padStart(2, '0'));
         setSelectedMonths(['all', ...allMonths]);
+        // Use current month for display when "all" is selected
+        setDisplayMonth(currentMonth);
+        setDisplayMonthName(months.find(m => m.value === currentMonth)?.label || '');
       } else {
         setSelectedMonths([]);
+        // Use current month for display when nothing is selected
+        setDisplayMonth(currentMonth);
+        setDisplayMonthName(months.find(m => m.value === currentMonth)?.label || '');
       }
     } else {
       const newSelection = value.filter(month => month !== 'all');
       setSelectedMonths(newSelection);
+      
+      // Update display month based on selection
+      if (newSelection.length === 1) {
+        const selectedMonth = newSelection[0];
+        setDisplayMonth(selectedMonth);
+        setDisplayMonthName(months.find(m => m.value === selectedMonth)?.label || '');
+      } else if (newSelection.length > 1) {
+        // If multiple months selected, use the first one for display or keep current
+        setDisplayMonth(newSelection[0]);
+        setDisplayMonthName(months.find(m => m.value === newSelection[0])?.label || '');
+      } else {
+        // If nothing selected, use current month
+        setDisplayMonth(currentMonth);
+        setDisplayMonthName(months.find(m => m.value === currentMonth)?.label || '');
+      }
     }
   };
 
@@ -667,7 +741,13 @@ function Dashboard({ visits = [], onDelete }) {
   // Unified search function
   const getFilteredVisits = () => {
     const filteredResults = localVisits.filter(visit => {
-      // First apply month filter
+      // If nothing is selected, only show current display month
+      if (selectedMonths.length === 0) {
+        const visitMonth = dayjs(visit.date).format('MM');
+        return visitMonth === displayMonth;
+      }
+
+      // If months are selected, apply month filter
       if (selectedMonths.length > 0 && !selectedMonths.includes('all')) {
         const visitMonth = dayjs(visit.date).format('MM');
         if (!selectedMonths.includes(visitMonth)) {
@@ -726,21 +806,21 @@ function Dashboard({ visits = [], onDelete }) {
     if (searchCategory === 'officerName' && searchQuery) {
       // Count questions for this officer using the proper question counting function
       const officerQuestionsCount = countQuestionsInVisits(
-        filteredResults.filter(v => dayjs(v.date).format('MM') === currentMonth),
-        currentMonth,
-        searchQuery
+        filteredResults.filter(v => dayjs(v.date).format('MM') === displayMonth),
+        displayMonth,
+        officerName
       );
       setTotalMonthlyQuestions(officerQuestionsCount);
     } else if (searchQuery || searchCategory === 'date') {
       // For other search types, count questions in the filtered results
       const filteredQuestionsCount = countQuestionsInVisits(
-        filteredResults.filter(v => dayjs(v.date).format('MM') === currentMonth)
+        filteredResults.filter(v => dayjs(v.date).format('MM') === displayMonth)
       );
       setTotalMonthlyQuestions(filteredQuestionsCount);
     } else {
       // If no search is active, count all questions for the current month
       const allQuestionsCount = countQuestionsInVisits(
-        localVisits.filter(v => dayjs(v.date).format('MM') === currentMonth)
+        localVisits.filter(v => dayjs(v.date).format('MM') === displayMonth)
       );
       setTotalMonthlyQuestions(allQuestionsCount);
     }
@@ -757,8 +837,14 @@ function Dashboard({ visits = [], onDelete }) {
     setSearchQuery('');
   };
 
-  // Get filtered visits
-  const filteredVisits = useMemo(() => getFilteredVisits(), [localVisits, searchCategory, searchQuery, selectedMonths, searchDate]);
+  // Get filtered visits with dependency on auth state
+  const filteredVisits = useMemo(() => {
+    // Only filter if auth is ready and data is loaded
+    if (userRole === undefined || userRole === null) {
+      return [];
+    }
+    return getFilteredVisits();
+  }, [localVisits, searchCategory, searchQuery, selectedMonths, searchDate, userRole]);
 
   const renderCell = (value, type) => {
     if (!value) return 'N/A';
@@ -921,6 +1007,7 @@ function Dashboard({ visits = [], onDelete }) {
 
   return (
     <div dir={isRtl ? 'rtl' : 'ltr'} style={{opacity: isLanguageChanging ? 0.5 : 1}}>
+      <StorageBanner />
       {isLanguageChanging && (
         <LoadingSpinner fullscreen message={t('changingLanguage')} />
       )}
@@ -931,6 +1018,7 @@ function Dashboard({ visits = [], onDelete }) {
         elevation={0}
         sx={{
           width: '100%',
+          top: 0,
           backgroundColor: theme.palette.mode === 'dark' 
             ? 'rgba(18, 18, 20, 0.8)' 
             : 'rgba(255, 255, 255, 0.9)',
@@ -1122,11 +1210,13 @@ function Dashboard({ visits = [], onDelete }) {
               variant="contained"
               onClick={(e) => {
                 preventClickDuringTransition(e);
-                if (!isLanguageChanging) {
+                if (!isLanguageChanging && canAddEntries()) {
                   navigate('/new-entry');
+                } else if (!canAddEntries()) {
+                  alert('🚫 Your storage is out of limit. Please upgrade to Premium to continue adding entries.');
                 }
               }}
-              disabled={isLanguageChanging}
+              disabled={isLanguageChanging || !canAddEntries()}
               sx={{
                 bgcolor: theme.palette.mode === 'dark' ? 'rgba(64, 181, 173, 0.8)' : '#40B5AD',
                 color: 'white',
@@ -1146,7 +1236,7 @@ function Dashboard({ visits = [], onDelete }) {
                     ? '0 6px 14px rgba(0, 0, 0, 0.4)' 
                     : '0 6px 14px rgba(64, 181, 173, 0.3)'
                 },
-                opacity: isLanguageChanging ? 0.7 : 1
+                opacity: (isLanguageChanging || !canAddEntries()) ? 0.5 : 1
               }}
             >
               {t('createNewEntry')}
@@ -1155,7 +1245,7 @@ function Dashboard({ visits = [], onDelete }) {
         </Toolbar>
       </AppBar>
 
-      <motion.div style={{ marginTop: '80px', minHeight: 'calc(100vh - 180px)', padding: '24px' }}>
+      <motion.div style={{ marginTop: getStorageStatus() !== 'active' ? '140px' : '80px', minHeight: 'calc(100vh - 180px)', padding: '24px' }}>
         {isLoading ? (
           <LoadingSpinner message={t('loadingVisits')} />
         ) : (
@@ -1269,7 +1359,7 @@ function Dashboard({ visits = [], onDelete }) {
                           fontSize: '1.125rem',
                           letterSpacing: '-0.5px'
                         }}>
-                          {t('totalVisits')}
+                          {t('totalVisitsThisMonth', { month: t(displayMonthName || currentMonthName) })}
                         </Typography>
                       </Box>
                       <Typography variant="h2" component="div" sx={{ 
@@ -1279,7 +1369,11 @@ function Dashboard({ visits = [], onDelete }) {
                         textAlign: 'center',
                         mt: 2
                       }}>
-                        {formatNumber(filteredVisits.length, i18n.language)}
+                        {isLoading ? (
+                          <CircularProgress size={30} color="inherit" sx={{ opacity: 0.7 }} />
+                        ) : (
+                          formatNumber(filteredVisits.filter(v => dayjs(v.date).format('MM') === displayMonth).length, i18n.language)
+                        )}
                       </Typography>
                     </CardContent>
                   </Card>
@@ -1351,7 +1445,7 @@ function Dashboard({ visits = [], onDelete }) {
                           fontSize: '1.125rem',
                           letterSpacing: '-0.5px'
                         }}>
-                          {t('totalQuestionsThisMonth', { month: t(currentMonthName) })}
+                          {t('totalQuestionsThisMonth', { month: t(displayMonthName || currentMonthName) })}
                         </Typography>
                       </Box>
                       <Typography variant="h2" component="div" sx={{ 
@@ -1361,7 +1455,98 @@ function Dashboard({ visits = [], onDelete }) {
                         textAlign: 'center',
                         mt: 2
                       }}>
-                        {formatNumber(totalMonthlyQuestions, i18n.language)}
+                        {isLoading ? (
+                          <CircularProgress size={30} color="inherit" sx={{ opacity: 0.7 }} />
+                        ) : (
+                          formatNumber(totalMonthlyQuestions, i18n.language)
+                        )}
+                      </Typography>
+                    </CardContent>
+                  </Card>
+
+                  {/* Add Total Minutes Card */}
+                  <Card 
+                    elevation={0}
+                    sx={{ 
+                      flex: '1 1 240px',
+                      maxWidth: '320px',
+                      minWidth: '240px',
+                      height: '100%',
+                      boxShadow: theme.palette.mode === 'dark' 
+                        ? '0 10px 30px rgba(0, 0, 0, 0.8)' 
+                        : '0 15px 35px rgba(64,181,173,0.18)',
+                      borderRadius: '24px',
+                      backgroundColor: theme.palette.mode === 'dark' 
+                        ? 'rgba(0, 0, 0, 0.25)' 
+                        : 'linear-gradient(145deg, #ffffff, #f5f9fa)',
+                      backgroundImage: theme.palette.mode === 'dark'
+                        ? 'linear-gradient(145deg, #1e1e1e, #121212)'
+                        : 'linear-gradient(145deg, #ffffff, #f5f9fa)',
+                      border: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.03)'}`,
+                      transition: 'all 0.3s ease',
+                      position: 'relative',
+                      overflow: 'hidden',
+                      '&:hover': {
+                        transform: 'translateY(-8px)',
+                        boxShadow: theme.palette.mode === 'dark' 
+                          ? '0 15px 35px rgba(0, 0, 0, 0.9)' 
+                          : '0 20px 40px rgba(64,181,173,0.25)',
+                      },
+                      '&::before': {
+                        content: '""',
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        background: theme.palette.mode === 'dark'
+                          ? 'linear-gradient(45deg, rgba(64,181,173,0.05) 0%, rgba(0,0,0,0) 70%)'
+                          : 'linear-gradient(45deg, rgba(64,181,173,0.08) 0%, rgba(255,255,255,0) 70%)',
+                        zIndex: 1
+                      }
+                    }}
+                  >
+                    <CardContent sx={{ p: 3, position: 'relative', zIndex: 2 }}>
+                      <Box sx={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        mb: 2,
+                        pb: 2,
+                        borderBottom: `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'}`
+                      }}>
+                        <Box sx={{ 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center',
+                          backgroundColor: theme.palette.mode === 'dark' ? 'rgba(64, 181, 173, 0.15)' : 'rgba(64, 181, 173, 0.1)',
+                          borderRadius: '12px',
+                          width: '48px',
+                          height: '48px',
+                          mr: 2
+                        }}>
+                          <DateRangeIcon sx={{ fontSize: 28, color: '#40B5AD' }} />
+                        </Box>
+                        <Typography variant="h6" component="div" sx={{ 
+                          fontWeight: 700, 
+                          color: theme.palette.mode === 'dark' ? '#fff' : '#40B5AD',
+                          fontSize: '1.125rem',
+                          letterSpacing: '-0.5px'
+                        }}>
+                          {t('totalMinutesThisMonth', { month: t(displayMonthName || currentMonthName) })}
+                        </Typography>
+                      </Box>
+                      <Typography variant="h2" component="div" sx={{ 
+                        fontWeight: 800, 
+                        color: theme.palette.text.primary,
+                        fontSize: '2.5rem',
+                        textAlign: 'center',
+                        mt: 2
+                      }}>
+                        {isLoading ? (
+                          <CircularProgress size={30} color="inherit" sx={{ opacity: 0.7 }} />
+                        ) : (
+                          formatNumber(countTotalMinutes(visits, isOfficer ? officerName : null, displayMonth), i18n.language)
+                        )}
                       </Typography>
                     </CardContent>
                   </Card>
@@ -1404,6 +1589,9 @@ function Dashboard({ visits = [], onDelete }) {
                         // Count questions using the improved function that detects question numbers (n)
                         const officerQuestions = countQuestionsInVisits(visits, selectedMonthValue, officer);
                         
+                        // Calculate total minutes for this officer
+                        const totalMinutes = countTotalMinutes(visits, officer, selectedMonthValue);
+                        
                         return (
                           <Grid item xs={12} sm={6} md={4} lg={2.4} key={officer}>
                             <Card 
@@ -1442,7 +1630,11 @@ function Dashboard({ visits = [], onDelete }) {
                                     {t('visits')}:
                                   </Typography>
                                   <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                                    {formatNumber(officerVisits, i18n.language)}
+                                    {isLoading ? (
+                                      <CircularProgress size={12} color="inherit" sx={{ opacity: 0.7, marginRight: 1 }} />
+                                    ) : (
+                                      formatNumber(officerVisits, i18n.language)
+                                    )}
                                   </Typography>
                                 </Box>
                                 
@@ -1451,7 +1643,24 @@ function Dashboard({ visits = [], onDelete }) {
                                     {t('questions')}:
                                   </Typography>
                                   <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                                    {formatNumber(officerQuestions, i18n.language)}
+                                    {isLoading ? (
+                                      <CircularProgress size={12} color="inherit" sx={{ opacity: 0.7, marginRight: 1 }} />
+                                    ) : (
+                                      formatNumber(officerQuestions, i18n.language)
+                                    )}
+                                  </Typography>
+                                </Box>
+                                
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                                  <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
+                                    {t('totalMinutes')}:
+                                  </Typography>
+                                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                                    {isLoading ? (
+                                      <CircularProgress size={12} color="inherit" sx={{ opacity: 0.7, marginRight: 1 }} />
+                                    ) : (
+                                      formatNumber(totalMinutes, i18n.language)
+                                    )}
                                   </Typography>
                                 </Box>
                               </CardContent>

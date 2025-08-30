@@ -15,6 +15,8 @@ import dayjs from 'dayjs';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../contexts/AuthContext';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import { canAddEntries, getStorageStatus } from '../utils/storageStatus';
+import { Alert, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions } from '@mui/material';
 
 const datePickerSx = {
   '& .MuiInputBase-root': {
@@ -334,6 +336,12 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
       return;
     }
 
+    // Check storage status for new entries (not for editing)
+    if (!isEditing && !canAddEntries()) {
+      alert('🚫 Your storage is out of limit. Please upgrade to Premium to continue adding entries.');
+      return;
+    }
+
     try {
       if (!validateForm()) {
         return;
@@ -412,6 +420,10 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
     return <LoadingSpinner fullscreen />;
   }
 
+  // Show storage expired message for new entries
+  const storageStatus = getStorageStatus();
+  const showStorageAlert = !isEditing && storageStatus === 'expired';
+
   return (
     <Container 
       maxWidth="md" 
@@ -426,6 +438,20 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
         <h2 className="form-title">
           {isEditing ? t('editVisit') : t('createNewVisit')}
         </h2>
+        {showStorageAlert && (
+          <Alert 
+            severity="error" 
+            sx={{ 
+              mb: 3, 
+              fontWeight: 500,
+              '& .MuiAlert-icon': {
+                fontSize: '1.5rem',
+              }
+            }}
+          >
+            🚫 Your storage is out of limit. Please upgrade to Premium to continue adding entries.
+          </Alert>
+        )}
         <div className="form-fields">
           <TextField
             required
@@ -544,49 +570,39 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
             error={!!errors.officerName}
             margin="normal"
           >
-            <InputLabel>{t('officerName')}</InputLabel>
+            <InputLabel id="officer-select-label">{t('officerName')}</InputLabel>
             {isAdmin ? (
-              // Admin can select any officer
               <Select
+                labelId="officer-select-label"
+                id="officer-select"
                 value={officerName}
                 onChange={(e) => setOfficerName(e.target.value)}
                 label={t('officerName')}
-                disabled={isLanguageChanging}
-                sx={{
-                  textAlign: isRtl ? 'right' : 'left',
-                  direction: 'inherit'
-                }}
               >
-                {OFFICERS.map((officer) => (
+                {OFFICERS.map(officer => (
                   <MenuItem key={officer} value={officer}>
                     {officer}
                   </MenuItem>
                 ))}
               </Select>
             ) : (
-              // Officer sees read-only field with their name
-              <TextField
+              // For officers, use a disabled Select component instead of TextField
+              <Select
+                labelId="officer-select-label"
+                id="officer-select-readonly"
                 value={officerName}
                 label={t('officerName')}
-                disabled={true}
-                InputProps={{
-                  readOnly: true,
-                }}
-                sx={{
-                  textAlign: isRtl ? 'right' : 'left',
-                  direction: 'inherit',
-                  '& .MuiInputBase-input': {
-                    color: theme.palette.text.secondary,
-                  }
-                }}
-              />
+                disabled
+                readOnly
+              >
+                <MenuItem value={officerName}>
+                  {officerName}
+                </MenuItem>
+              </Select>
             )}
             {errors.officerName && (
-              <FormHelperText>
-                <span style={{ display: 'flex', alignItems: 'center', color: '#d32f2f' }}>
-                  <ErrorOutlineIcon fontSize="small" style={{ marginRight: 4 }} />
-                  {errors.officerName}
-                </span>
+              <FormHelperText error>
+                {errors.officerName}
               </FormHelperText>
             )}
           </FormControl>
@@ -771,7 +787,7 @@ function NewEntry({ refreshData, visit, onUpdate, isEditing }) {
             className="save-visit-button"
             variant="contained"
             onClick={handleFormSubmit}
-            disabled={loading || isLanguageChanging}
+            disabled={loading || isLanguageChanging || showStorageAlert}
           >
             {isEditing ? t('updateVisit') : t('saveVisit')}
           </Button>

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import './App.css';
 import { Typography, Button } from '@mui/material';
 import { db, visitsCollection, deleteVisitDoc, ensureVisitsCollection, firebasePersistenceInitialized } from './firebase';
-import { collection, doc, getDoc, query, getDocs, orderBy, updateDoc } from "firebase/firestore";
+import { collection, doc, getDoc, query, getDocs, orderBy, updateDoc, limit, startAfter } from "firebase/firestore";
 import { Route, Routes, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '@mui/material/styles';
@@ -20,6 +20,7 @@ import Footer from './components/Footer';
 import { AuthProvider } from './contexts/AuthContext';
 import PrivateRoute from './components/PrivateRoute';
 import WelcomeAnimation from './components/WelcomeAnimation';
+import dayjs from 'dayjs';
 
 // Edit visit wrapper component
 const EditVisitWrapper = () => {
@@ -193,8 +194,19 @@ function App() {
         return;
       }
 
-      const q = query(visitsCollection, orderBy("createdAt", "desc"));
-      const querySnapshot = await getDocs(q);
+      // Optimize query with limit and appropriate indexing
+      // Get current month to prioritize recent data
+      const currentMonth = dayjs().format('MM');
+      const currentYear = dayjs().format('YYYY');
+      
+      // First fetch current month data - users most likely need this first
+      const currentMonthQuery = query(
+        visitsCollection,
+        orderBy("createdAt", "desc"),
+        limit(100) // Reasonable initial limit
+      );
+      
+      const querySnapshot = await getDocs(currentMonthQuery);
       
       const visitsData = querySnapshot.docs.map(doc => ({
         id: doc.id,
@@ -202,11 +214,48 @@ function App() {
       }));
       
       setVisits(visitsData);
+      
+      // Then fetch additional data if needed in background
+      if (querySnapshot.docs.length === 100) {
+        fetchAdditionalData(visitsData);
+      }
     } catch (error) {
       console.error("Error fetching visits:", error);
       setError(t('failedToLoad'));
     } finally {
       setLoading(false);
+    }
+  };
+  
+  // New function to fetch additional data in background
+  const fetchAdditionalData = async (existingVisits) => {
+    try {
+      // Get the timestamp of the last visit we loaded
+      const lastVisitTimestamp = existingVisits[existingVisits.length - 1]?.createdAt;
+      
+      if (!lastVisitTimestamp) return;
+      
+      const additionalQuery = query(
+        visitsCollection,
+        orderBy("createdAt", "desc"),
+        startAfter(lastVisitTimestamp),
+        limit(200)
+      );
+      
+      const additionalSnapshot = await getDocs(additionalQuery);
+      
+      const additionalData = additionalSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      if (additionalData.length > 0) {
+        // Merge with existing data
+        setVisits(prev => [...prev, ...additionalData]);
+      }
+    } catch (error) {
+      console.error("Error fetching additional visits:", error);
+      // Don't show error to user as this is background loading
     }
   };
 
@@ -368,7 +417,7 @@ function App() {
               }
             />
           </Routes>
-          {!isAuthPage && <Footer />}
+          {!isAuthPage && !location.pathname.includes('/new-entry') && !location.pathname.includes('/edit/') && <Footer />}
         </AuthProvider>
       )}
     </div>
